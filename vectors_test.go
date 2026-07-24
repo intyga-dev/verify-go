@@ -56,7 +56,7 @@ func TestSharedGoldenReceiptVectors(t *testing.T) {
 			sigAlg = *entry.Receipt.SigAlg
 		}
 		canonical := entry.Receipt.CanonicalPayload
-		if sigAlg == "WEBAUTHN" || (sigAlg != "AUTO_APPROVED" && canonicalVersion(canonical) != 3) {
+		if sigAlg == "WEBAUTHN" || (sigAlg != "AUTO_APPROVED" && canonicalVersion(canonical) != DivVersion) {
 			continue
 		}
 
@@ -64,7 +64,12 @@ func TestSharedGoldenReceiptVectors(t *testing.T) {
 		if entry.Receipt.ActionType != nil {
 			actionType = *entry.Receipt.ActionType
 		}
+		target := ""
+		if entry.Receipt.Target != nil {
+			target = *entry.Receipt.Target
+		}
 		expected := Expected{
+			Target:     target,
 			Nonce:      canonicalNonce(canonical),
 			ActionType: actionType,
 			Params:     entry.Receipt.Params,

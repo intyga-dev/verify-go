@@ -12,6 +12,7 @@ type webauthnVector struct {
 	RpID     string `json:"rpId"`
 	Origin   string `json:"origin"`
 	Expected struct {
+		Target       string                 `json:"target"`
 		Nonce        string                 `json:"nonce"`
 		ActionType   string                 `json:"actionType"`
 		Params       map[string]interface{} `json:"params"`
@@ -35,7 +36,7 @@ func loadWebAuthnVector(t *testing.T) webauthnVector {
 }
 
 func (v webauthnVector) expected() Expected {
-	return Expected{Nonce: v.Expected.Nonce, ActionType: v.Expected.ActionType, Params: v.Expected.Params}
+	return Expected{Target: v.Expected.Target, Nonce: v.Expected.Nonce, ActionType: v.Expected.ActionType, Params: v.Expected.Params}
 }
 
 func TestWebAuthnValidVector(t *testing.T) {

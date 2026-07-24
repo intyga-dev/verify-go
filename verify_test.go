@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestCanonicalAuthorizationPayloadV3Parity(t *testing.T) {
+func TestCanonicalIntentPayloadParity(t *testing.T) {
 	params := map[string]interface{}{
 		"zeta":  float64(1),
 		"alpha": float64(2),
@@ -18,11 +18,11 @@ func TestCanonicalAuthorizationPayloadV3Parity(t *testing.T) {
 		Attestation: nil,
 	}
 
-	exp := "2026-07-23T19:30:00Z"
-	got := CanonicalAuthorizationPayloadV3("c_8f91a2", "deleteDatabase", "Delete staging database", params, req, &exp)
-	expected := `{"v":3,"type":"agent-authorization","nonce":"c_8f91a2","actionType":"deleteDatabase","action":"Delete staging database","params":{"alpha":2,"mid":{"a":2,"z":1},"zeta":1},"requester":{"did":"did:sakra:service:deploy-pipeline","attestation":null},"expiresAt":"2026-07-23T19:30:00Z"}`
+	got := CanonicalIntentPayload("prod-db-cluster-01", "deleteDatabase", "Delete staging database", params, req, "c_8f91a2", "2026-07-23T19:30:00Z")
+	// Strict RFC 8785 JCS: every key sorted; type/version last.
+	expected := `{"actionType":"deleteDatabase","display":"Delete staging database","expiresAt":"2026-07-23T19:30:00Z","nonce":"c_8f91a2","params":{"alpha":2,"mid":{"a":2,"z":1},"zeta":1},"requester":{"attestation":null,"did":"did:sakra:service:deploy-pipeline"},"target":"prod-db-cluster-01","type":"div-intent-verification","v":1}`
 
 	if got != expected {
-		t.Fatalf("CanonicalAuthorizationPayloadV3 mismatch:\nGot:  %s\nWant: %s", got, expected)
+		t.Fatalf("CanonicalIntentPayload mismatch:\nGot:  %s\nWant: %s", got, expected)
 	}
 }
