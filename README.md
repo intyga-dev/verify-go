@@ -1,21 +1,21 @@
-# verify-go — Offline SÄKRA receipt verification for Go
+# verify-go — Offline Intyga receipt verification for Go
 
-Independently confirm that a human cryptographically approved **exactly** the action you are about to run — in your own process, with no SÄKRA secret and no network call. You recompute the canonical payload from your own parameters, check it byte-matches what was signed, and verify the human's **ES256** or **WebAuthn** signature.
+Independently confirm that a human cryptographically approved **exactly** the action you are about to run — in your own process, with no Intyga secret and no network call. You recompute the canonical payload from your own parameters, check it byte-matches what was signed, and verify the human's **ES256** or **WebAuthn** signature.
 
 Zero third-party dependencies — Go standard library only. Its canonicalization is held byte-identical to the TypeScript, Python, and Rust verifiers by shared cross-language test vectors.
 
-> Status: **not yet published**. Part of the SÄKRA multi-language verifier set.
+> Status: **not yet published**. Part of the Intyga multi-language verifier set.
 
 ## Install
 
 ```sh
-go get github.com/sakra-trust/verify-go
+go get github.com/intyga-dev/verify-go
 ```
 
 ## Verify an approval receipt
 
 ```go
-import verify "github.com/sakra-trust/verify-go"
+import verify "github.com/intyga-dev/verify-go"
 
 // `expected` is what you are ABOUT to execute; `nonce` is the challenge YOU issued.
 res := verify.VerifyApprovalReceipt(receipt, verify.Expected{
@@ -47,7 +47,7 @@ res := verify.VerifyApprovalReceipt(receipt, expected, verify.VerifyOptions{
 
 This port implements the **DEWP Core primitives** ([`docs/DEWP.md`](../../docs/DEWP.md) §9.1):
 domain-separated hashing (`0x00`/`0x01`/`0x02`/`0x03`), two-tier Merkle tree construction with
-duplicate-last balancing, leaf-to-root inclusion proof verification, the `trust.sakra.audit.v1`
+duplicate-last balancing, leaf-to-root inclusion proof verification, the `trust.intyga.audit.v1`
 canonical preimage, and the `0x03` anchor digest. Byte parity with the TypeScript reference is locked
 by the shared golden vectors in `packages/mcp-schemas/vectors/ledger-vectors.json`.
 
@@ -60,14 +60,14 @@ It does **not** implement, and a caller should not assume:
 - **Evidence bundles, `tenantSeq` gapless validation, and NDJSON streaming** (§9.2 Extended Profile).
 
 For the Extended Profile — signed multi-anchor quorum, evidence bundles, gapless completeness and the
-four-property verification model — use the TypeScript verifier (`@sakra-trust/verify`).
+four-property verification model — use the TypeScript verifier (`@intyga/verify`).
 
 ## Also available in
-- TypeScript — [`@sakra-trust/verify`](https://github.com/SAKRA-trust/verify)
-- Python — [`verify-python`](https://github.com/SAKRA-trust/verify-python)
-- Rust — [`sakra-verify`](https://github.com/SAKRA-trust/verify-rust)
+- TypeScript — [`@intyga/verify`](https://github.com/intyga-dev/verify)
+- Python — [`verify-python`](https://github.com/intyga-dev/verify-python)
+- Rust — [`intyga-verify`](https://github.com/intyga-dev/verify-rust)
 
-For a full client that *requests* approvals (not just verifies them), see [`sdk-go`](https://github.com/SAKRA-trust/sdk-go).
+For a full client that *requests* approvals (not just verifies them), see [`sdk-go`](https://github.com/intyga-dev/sdk-go).
 
 ## License
 

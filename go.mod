@@ -1,3 +1,3 @@
-module github.com/sakra-trust/verify-go
+module github.com/intyga-dev/verify-go
 
 go 1.21

@@ -68,11 +68,18 @@ func TestSharedGoldenReceiptVectors(t *testing.T) {
 		if entry.Receipt.Target != nil {
 			target = *entry.Receipt.Target
 		}
+		// See the note in webauthn_test.go: for a golden vector, the committed signer key is the
+		// out-of-band enrollment record the relying party would resolve for itself.
+		signerKey := ""
+		if entry.Receipt.SignerPublicKey != nil {
+			signerKey = *entry.Receipt.SignerPublicKey
+		}
 		expected := Expected{
 			Target:     target,
 			Nonce:      canonicalNonce(canonical),
 			ActionType: actionType,
 			Params:     entry.Receipt.Params,
+			Approvers:  ApproverTrustAnchor{PublicKeys: []string{signerKey}},
 		}
 
 		result := VerifyApprovalReceipt(entry.Receipt, expected, VerifyOptions{})

@@ -36,7 +36,20 @@ func loadWebAuthnVector(t *testing.T) webauthnVector {
 }
 
 func (v webauthnVector) expected() Expected {
-	return Expected{Target: v.Expected.Target, Nonce: v.Expected.Nonce, ActionType: v.Expected.ActionType, Params: v.Expected.Params}
+	// The trust anchor is REQUIRED. For a golden vector the committed file is the enrollment
+	// record, so pinning its key is the legitimate resolution step — it still comes from outside
+	// the verifier.
+	key := ""
+	if v.Receipt.SignerPublicKey != nil {
+		key = *v.Receipt.SignerPublicKey
+	}
+	return Expected{
+		Target:     v.Expected.Target,
+		Nonce:      v.Expected.Nonce,
+		ActionType: v.Expected.ActionType,
+		Params:     v.Expected.Params,
+		Approvers:  ApproverTrustAnchor{PublicKeys: []string{key}},
+	}
 }
 
 func TestWebAuthnValidVector(t *testing.T) {
