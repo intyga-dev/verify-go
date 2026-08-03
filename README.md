@@ -32,6 +32,8 @@ if !res.OK {
 }
 ```
 
+**One-approver-per-key caveat.** In `PublicKeys` mode the identity IS the key, so an M-of-N quorum counts credentials, not people: one approver whose two registered credentials are both listed satisfies a 2-of-N alone. For `requiredApprovals` > 1 use the DID/identity form, which counts distinct approvers (DIV §4.4.6).
+
 One byte of drift — a swapped target, an appended region — and verification fails, because the signature was over the exact bytes you just recomputed.
 
 ## WebAuthn (passkey) receipts
@@ -66,6 +68,10 @@ It does **not** implement, and a caller should not assume:
 - **Evidence bundles, `tenantSeq` gapless validation, and NDJSON streaming** (§9.2 Extended Profile).
 - **The §5.4 checkpoint continuity chain (`0x04` domain tag).** Roots-file transport, outside Core
   (DEWP §9.1); implemented by the TypeScript verifier only.
+- **DIV §4.4.4 verification-code derivation** (the `digests` vector section). The short display
+  code is a human-factors aid that MUST NOT be treated as authentication, so this port carries
+  `verificationCode` as an unvalidated field and deliberately does not assert those vectors
+  (TypeScript and Python do).
 
 For the rest of the surface — signed multi-anchor quorum, evidence bundles, gapless `tenantSeq`
 completeness over committed events, and the four-property verification model — use the TypeScript

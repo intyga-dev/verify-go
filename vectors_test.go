@@ -308,7 +308,9 @@ func TestDelegationCanonicalParity(t *testing.T) {
 		if !strings.Contains(got, `"type":"div-delegation"`) {
 			t.Errorf("payload for %s is missing the delegation type discriminator", c.Input.ActionType)
 		}
-		if !strings.Contains(got, `"delegatedTo":["did:intyga:sre-a","did:intyga:sre-b","did:intyga:sre-c"]`) {
+		// UTF-16 code-unit order: U+1F600 before U+FFFD. UTF-8-byte order (Go's sort.Strings) would
+		// put them the other way round, so this line is what pins the comparator, not merely "sorted".
+		if !strings.Contains(got, `"delegatedTo":["did:intyga:sre-a","did:intyga:sre-c","did:intyga:sre-😀","did:intyga:sre-�"]`) {
 			t.Errorf("delegatedTo was not canonicalized as a sorted set for %s: %s", c.Input.ActionType, got)
 		}
 	}
