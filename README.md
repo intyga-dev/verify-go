@@ -4,7 +4,7 @@ Independently confirm that a human cryptographically approved **exactly** the ac
 
 Zero third-party dependencies — Go standard library only. Its canonicalization is held byte-identical to the TypeScript, Python, and Rust verifiers by shared cross-language test vectors.
 
-> Status: **not yet published**. Part of the Intyga multi-language verifier set.
+> Part of the Intyga multi-language verifier set (TypeScript, Python, Go, Rust).
 
 ## Install
 
