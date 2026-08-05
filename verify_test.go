@@ -31,6 +31,7 @@ func TestCanonicalIntentPayloadParity(t *testing.T) {
 		RequireHardwareKey:     true,
 		AllowedAaguids:         []string{"b-aaguid", "a-aaguid"},
 		RequesterCannotApprove: true,
+		SignerClass:            "human",
 	}
 
 	got, err := CanonicalIntentPayload("prod-db-cluster-01", "deleteDatabase", "Delete staging database", params, req, requirement, "c_8f91a2", "2026-07-23T19:30:00Z")
@@ -39,7 +40,7 @@ func TestCanonicalIntentPayloadParity(t *testing.T) {
 	}
 	// Strict RFC 8785 JCS: every key sorted; type/version last. Byte-for-byte the string the TS
 	// reference implementation (@intyga/mcp-schemas) emits for the same input.
-	expected := `{"actionType":"deleteDatabase","display":"Delete staging database","expiresAt":"2026-07-23T19:30:00Z","nonce":"c_8f91a2","params":{"alpha":2,"mid":{"a":2,"z":1},"zeta":1},"requester":{"attestation":null,"did":"did:intyga:service:deploy-pipeline"},"requirement":{"allowedAaguids":["a-aaguid","b-aaguid"],"requesterCannotApprove":true,"requireHardwareKey":true,"requiredApprovals":2},"target":"prod-db-cluster-01","type":"div-intent-verification","v":1}`
+	expected := `{"actionType":"deleteDatabase","display":"Delete staging database","expiresAt":"2026-07-23T19:30:00Z","nonce":"c_8f91a2","params":{"alpha":2,"mid":{"a":2,"z":1},"zeta":1},"requester":{"attestation":null,"did":"did:intyga:service:deploy-pipeline"},"requirement":{"allowedAaguids":["a-aaguid","b-aaguid"],"requesterCannotApprove":true,"requireHardwareKey":true,"requiredApprovals":2,"signerClass":"human"},"target":"prod-db-cluster-01","type":"div-intent-verification","v":1}`
 
 	if got != expected {
 		t.Fatalf("CanonicalIntentPayload mismatch:\nGot:  %s\nWant: %s", got, expected)
@@ -57,7 +58,7 @@ func TestCanonicalIntentPayloadParity(t *testing.T) {
 func TestAutoApprovedStillBindsTargetAndParams(t *testing.T) {
 	autoApproved := "AUTO_APPROVED"
 	requester := RequesterIdentity{DID: "did:intyga:service:agent", Attestation: nil}
-	requirement := ApprovalRequirement{RequiredApprovals: 1}
+	requirement := ApprovalRequirement{RequiredApprovals: 1, SignerClass: "human"}
 
 	// What was actually approved: a harmless read on a sandbox, long expired.
 	approved, err := CanonicalIntentPayload(
@@ -144,7 +145,7 @@ func TestStableStringifyDoesNotHTMLEscape(t *testing.T) {
 	}
 
 	requester := RequesterIdentity{DID: "did:intyga:service:deploy", Attestation: nil}
-	requirement := ApprovalRequirement{RequiredApprovals: 1}
+	requirement := ApprovalRequirement{RequiredApprovals: 1, SignerClass: "human"}
 	payload, err := CanonicalIntentPayload(
 		"https://api.example.com/v1?a=1&b=2", "transfer", "Transfer to Acme & Co",
 		map[string]interface{}{"note": "<redacted>"},
@@ -237,7 +238,7 @@ func TestStableStringifyRefusesNonPortableIntegers(t *testing.T) {
 // instead of swallowing it.
 func TestBuilderPropagatesNonPortableNumber(t *testing.T) {
 	requester := RequesterIdentity{DID: "did:intyga:service:deploy", Attestation: nil}
-	requirement := ApprovalRequirement{RequiredApprovals: 1}
+	requirement := ApprovalRequirement{RequiredApprovals: 1, SignerClass: "human"}
 	if got, err := CanonicalIntentPayload(
 		"prod-db", "transfer", "Transfer",
 		map[string]interface{}{"amount": 1e16},
@@ -253,7 +254,7 @@ func TestBuilderPropagatesNonPortableNumber(t *testing.T) {
 // operator, and the TS reference makes the same distinction.
 func TestVerifyFailsClosedOnNonPortableExpectedParams(t *testing.T) {
 	requester := RequesterIdentity{DID: "did:intyga:service:agent", Attestation: nil}
-	requirement := ApprovalRequirement{RequiredApprovals: 1}
+	requirement := ApprovalRequirement{RequiredApprovals: 1, SignerClass: "human"}
 	approved, err := CanonicalIntentPayload(
 		"prod-db", "transfer", "Transfer",
 		map[string]interface{}{"amount": float64(9000)},
@@ -309,7 +310,7 @@ func garbageWitnesses(n int) []ApprovalWitness {
 // landed there.
 func TestApprovalRefusesOversizedWitnessList(t *testing.T) {
 	requester := RequesterIdentity{DID: "did:intyga:service:agent", Attestation: nil}
-	requirement := ApprovalRequirement{RequiredApprovals: 1}
+	requirement := ApprovalRequirement{RequiredApprovals: 1, SignerClass: "human"}
 	params := map[string]interface{}{"path": "/tmp"}
 	canonical, err := CanonicalIntentPayload(
 		"sandbox-cluster", "listFiles", "List files", params,
@@ -345,7 +346,7 @@ func TestApprovalRefusesOversizedWitnessList(t *testing.T) {
 // its own witness loop.
 func TestDelegationRefusesOversizedWitnessList(t *testing.T) {
 	requester := RequesterIdentity{DID: "did:intyga:service:pipeline", Attestation: nil}
-	requirement := ApprovalRequirement{RequiredApprovals: 1}
+	requirement := ApprovalRequirement{RequiredApprovals: 1, SignerClass: "human"}
 	params := map[string]interface{}{"environment": "prod"}
 	delegates := []string{"did:intyga:human:alice", "did:intyga:human:bob"}
 	canonical, err := CanonicalDelegationPayload(
@@ -383,7 +384,7 @@ func TestDelegationRefusesOversizedWitnessList(t *testing.T) {
 // unbounded join produced in the TS reference.
 func TestQuorumFailureReasonStaysBounded(t *testing.T) {
 	requester := RequesterIdentity{DID: "did:intyga:service:agent", Attestation: nil}
-	requirement := ApprovalRequirement{RequiredApprovals: 1}
+	requirement := ApprovalRequirement{RequiredApprovals: 1, SignerClass: "human"}
 	params := map[string]interface{}{"path": "/tmp"}
 	canonical, err := CanonicalIntentPayload(
 		"sandbox-cluster", "listFiles", "List files", params,
@@ -419,5 +420,56 @@ func TestQuorumFailureReasonStaysBounded(t *testing.T) {
 	}
 	if len(res.Reason) > 1000 {
 		t.Errorf("failure reason is not bounded: %d bytes", len(res.Reason))
+	}
+}
+
+// TestSignerClassRegistryFailsClosed pins DIV §4.3.2 / §5-step-3a: a payload whose signerClass is
+// absent or unrecognized must never verify — an unknown class treated as human-equivalent would
+// make "human-approved" an unverifiable claim the moment a second class exists.
+func TestSignerClassRegistryFailsClosed(t *testing.T) {
+	autoApproved := "AUTO_APPROVED"
+	requester := RequesterIdentity{DID: "did:intyga:service:agent", Attestation: nil}
+	expected := Expected{
+		Target:     "sandbox-cluster",
+		Nonce:      "c_nonce_sc",
+		ActionType: "listFiles",
+		Params:     map[string]interface{}{"path": "/tmp"},
+		Approvers:  ApproverTrustAnchor{PublicKeys: []string{}},
+	}
+	// AUTO_APPROVED with AllowAutoApproved+AllowExpired is the minimal path that would otherwise
+	// verify with no signature material, so a pass here isolates the signerClass gate itself.
+	opts := VerifyOptions{AllowAutoApproved: true, AllowExpired: true}
+
+	for _, tc := range []struct {
+		name        string
+		signerClass string
+		wantReason  string
+	}{
+		{"unrecognized class refused", "delegated-agent", "does not recognize"},
+		{"absent class refused", "", "missing signerClass"},
+	} {
+		requirement := ApprovalRequirement{RequiredApprovals: 1, SignerClass: tc.signerClass}
+		canonical, err := CanonicalIntentPayload(
+			"sandbox-cluster", "listFiles", "List files",
+			map[string]interface{}{"path": "/tmp"},
+			requester, requirement, "c_nonce_sc", "2999-01-01T00:00:00Z",
+		)
+		if err != nil {
+			t.Fatalf("%s: CanonicalIntentPayload refused portable input: %v", tc.name, err)
+		}
+		receipt := ApprovalReceipt{
+			CanonicalPayload:  canonical,
+			ActionDescription: "List files",
+			Params:            map[string]interface{}{"path": "/tmp"},
+			SigAlg:            &autoApproved,
+			Requester:         &requester,
+		}
+		r := VerifyApprovalReceipt(receipt, expected, opts)
+		if r.OK {
+			t.Fatalf("%s: verified despite signerClass %q", tc.name, tc.signerClass)
+		}
+		if !strings.Contains(r.Reason, tc.wantReason) {
+			t.Fatalf("%s: refused for the wrong reason: %s", tc.name, r.Reason)
+		}
 	}
 }

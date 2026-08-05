@@ -42,7 +42,7 @@ func signedOfflineReceipt(t *testing.T, challengedAt, expiresAt string) (Approva
 	pub := base64.StdEncoding.EncodeToString(der)
 
 	requester := RequesterIdentity{DID: "did:intyga:service:pipeline"}
-	requirement := ApprovalRequirement{RequiredApprovals: 1, AllowedAaguids: []string{}}
+	requirement := ApprovalRequirement{RequiredApprovals: 1, AllowedAaguids: []string{}, SignerClass: "human"}
 	params := map[string]interface{}{"environment": "prod"}
 
 	canonical, err := CanonicalOfflineIntentPayload(
