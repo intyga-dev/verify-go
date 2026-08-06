@@ -2,9 +2,9 @@
 
 Independently confirm that a human cryptographically approved **exactly** the action you are about to run — in your own process, with no Intyga secret and no network call. You recompute the canonical payload from your own parameters, check it byte-matches what was signed, and verify the human's **ES256** or **WebAuthn** signature.
 
-Zero third-party dependencies — Go standard library only. Its canonicalization is held byte-identical to the TypeScript, Python, and Rust verifiers by shared cross-language test vectors.
+Zero third-party dependencies — Go standard library only. Its canonicalization is held byte-identical to the TypeScript, Python, Rust and Java verifiers by shared cross-language test vectors.
 
-> Part of the Intyga multi-language verifier set (TypeScript, Python, Go, Rust).
+> Part of the Intyga multi-language verifier set (TypeScript, Python, Go, Rust, Java).
 
 ## Install
 
@@ -88,6 +88,7 @@ anywhere.
 - TypeScript — [`@intyga/verify`](https://github.com/intyga-dev/verify)
 - Python — [`verify-python`](https://github.com/intyga-dev/verify-python)
 - Rust — [`intyga-verify`](https://github.com/intyga-dev/verify-rust)
+- Java — [`verify-java`](https://github.com/intyga-dev/verify-java)
 
 For a full client that *requests* approvals (not just verifies them), see [`sdk-go`](https://github.com/intyga-dev/sdk-go).
 
