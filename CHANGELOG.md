@@ -5,7 +5,7 @@ All notable changes to `github.com/intyga-dev/verify-go` are documented here. Th
 
 ## [Unreleased]
 
-## [0.1.0]
+## [1.0.0]
 
 Initial public release.
 
