@@ -1,6 +1,7 @@
 package verify
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -234,6 +235,109 @@ func TestStableStringifyRefusesNonPortableIntegers(t *testing.T) {
 	}
 }
 
+// ─── Types the canonicalizer cannot canonicalize ────────────────────────────
+
+// TestStableStringifyRefusesUncanonicalizableGoTypes pins the fail-closed default branch. Go is the
+// only port with no closed JSON value type, so a caller can hand the canonicalizer a float32, a
+// uint64 or a map[string]string. This used to fall through to encoding/json, which sorts keys by
+// UTF-8 bytes instead of UTF-16 code units, escapes U+2028/U+2029, and applies no portable-range
+// check — the exact three contradictions of the shared vectors. The shared vector harness cannot
+// reach this: it decodes every case into interface{} first, so nothing typed ever arrives.
+func TestStableStringifyRefusesUncanonicalizableGoTypes(t *testing.T) {
+	type approval struct{ Amount int }
+	for name, v := range map[string]interface{}{
+		"map[string]string": map[string]string{"a": "b"},
+		"float32":           float32(1e20),
+		"uint64":            uint64(20000000000000000),
+		"uint":              uint(1),
+		"int32":             int32(7),
+		"[]int":             []int{1, 2},
+		"[]float64":         []float64{1.5},
+		"struct":            approval{Amount: 1},
+		"json.Number":       json.Number("1"),
+	} {
+		got, err := StableStringify(map[string]interface{}{"x": v})
+		if err == nil {
+			t.Errorf("%s must be refused, serialized to %s", name, got)
+			continue
+		}
+		if !strings.Contains(err.Error(), "cannot be canonicalized") {
+			t.Errorf("%s: reason should say the value cannot be canonicalized, got: %v", name, err)
+		}
+	}
+
+	// The error names the Go type, so the caller can find the offending field.
+	_, err := StableStringify(map[string]interface{}{"x": uint64(1)})
+	if err == nil || !strings.Contains(err.Error(), "uint64") {
+		t.Errorf("the refusal must name the Go type, got: %v", err)
+	}
+}
+
+// TestStableStringifyHandlesStringSlices pins the one typed shape the canonicalizer does accept:
+// the builders hand allowedAaguids and delegatedTo in as []string, so it must take the same
+// JS-compatible string path as everything else rather than encoding/json — which escapes
+// U+2028/U+2029 unconditionally, contradicting the "line-separators" shared vector.
+func TestStableStringifyHandlesStringSlices(t *testing.T) {
+	got, err := StableStringify(map[string]interface{}{"tags": []string{"a b", "x&y"}})
+	if err != nil {
+		t.Fatalf("[]string is canonicalizable, got error: %v", err)
+	}
+	want := "{\"tags\":[\"a b\",\"x&y\"]}"
+	if got != want {
+		t.Errorf("StableStringify([]string) = %q, want %q", got, want)
+	}
+	// Identical bytes whichever way the caller spells the same array.
+	viaInterface, err := StableStringify(map[string]interface{}{"tags": []interface{}{"a b", "x&y"}})
+	if err != nil {
+		t.Fatalf("[]interface{} refused: %v", err)
+	}
+	if viaInterface != got {
+		t.Errorf("[]string and []interface{} disagree:\n  %q\n  %q", got, viaInterface)
+	}
+}
+
+// TestVerifyFailsClosedOnUncanonicalizableExpectedParams pins the SHAPE of the failure at the
+// relying-party boundary: Expected.Params is a map[string]interface{}, so writing []int or a uint64
+// id into it is ordinary Go. It must surface as "not canonicalizable", never as the
+// tampering-shaped "do not match" the silent encoding/json fallback used to produce.
+func TestVerifyFailsClosedOnUncanonicalizableExpectedParams(t *testing.T) {
+	requester := RequesterIdentity{DID: "did:intyga:service:agent", Attestation: nil}
+	requirement := ApprovalRequirement{RequiredApprovals: 1, SignerClass: "human"}
+	approved, err := CanonicalIntentPayload(
+		"prod-db", "transfer", "Transfer",
+		map[string]interface{}{"ids": []interface{}{float64(1)}},
+		requester, requirement, "c_uc_1", "2999-01-01T00:00:00Z",
+	)
+	if err != nil {
+		t.Fatalf("portable payload refused: %v", err)
+	}
+	res := VerifyApprovalReceipt(
+		ApprovalReceipt{
+			CanonicalPayload:  approved,
+			ActionDescription: "Transfer",
+			Params:            map[string]interface{}{"ids": []interface{}{float64(1)}},
+			Requester:         &requester,
+		},
+		Expected{
+			Target:     "prod-db",
+			Nonce:      "c_uc_1",
+			ActionType: "transfer",
+			Params:     map[string]interface{}{"ids": []int{1}},
+			Approvers:  ApproverTrustAnchor{PublicKeys: []string{"AAAA"}},
+		},
+		VerifyOptions{},
+	)
+	if res.OK {
+		t.Fatal("uncanonicalizable expected params must fail closed")
+	}
+	if !strings.Contains(res.Reason, "not canonicalizable") {
+		t.Errorf("reason should name the canonicalization failure, got: %s", res.Reason)
+	}
+	if strings.Contains(res.Reason, "do not match") {
+		t.Errorf("reason must not be tampering-shaped, got: %s", res.Reason)
+	}
+}
+
 // TestBuilderPropagatesNonPortableNumber pins that the canonical builders surface the refusal
 // instead of swallowing it.
 func TestBuilderPropagatesNonPortableNumber(t *testing.T) {
@@ -367,7 +471,12 @@ func TestDelegationRefusesOversizedWitnessList(t *testing.T) {
 		Target:     "prod-db",
 		ActionType: "deleteDatabase",
 		Params:     params,
-		Approvers:  ApproverTrustAnchor{PublicKeys: []string{"AAAA"}},
+		// DID mode: delegations refuse a key-set anchor outright (DIV §4.4.6), and this test is
+		// about the witness cap, which must still be reached.
+		Approvers: ApproverTrustAnchor{
+			DIDs:       []string{"did:intyga:human:alice"},
+			ResolveKey: func(did string) string { return "AAAA" },
+		},
 	}
 	res, delegation := VerifyDelegation(receipt, expected, VerifyOptions{AllowExpired: true})
 	if res.OK || delegation != nil {
@@ -471,5 +580,22 @@ func TestSignerClassRegistryFailsClosed(t *testing.T) {
 		if !strings.Contains(r.Reason, tc.wantReason) {
 			t.Fatalf("%s: refused for the wrong reason: %s", tc.name, r.Reason)
 		}
+	}
+}
+
+// TestDelegationRefusesKeySetAnchor pins DIV §4.4.6 at SEAL verification: the sealing quorum names
+// people, so a PublicKeys anchor (credentials-as-identities) must be refused outright — previously
+// only delegatedTo enforcement at use time refused it.
+func TestDelegationRefusesKeySetAnchor(t *testing.T) {
+	res, _ := VerifyDelegation(
+		ApprovalReceipt{CanonicalPayload: `{"v":1,"type":"div-delegation"}`},
+		Expected{Approvers: ApproverTrustAnchor{PublicKeys: []string{"a-listed-key"}}},
+		VerifyOptions{},
+	)
+	if res.OK {
+		t.Fatal("delegation under a key-set anchor must be refused")
+	}
+	if !strings.Contains(res.Reason, "§4.4.6") {
+		t.Fatalf("wrong reason: %s", res.Reason)
 	}
 }

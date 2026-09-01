@@ -32,7 +32,7 @@ if !res.OK {
 }
 ```
 
-**One-approver-per-key caveat.** In `PublicKeys` mode the identity IS the key, so an M-of-N quorum counts credentials, not people: one approver whose two registered credentials are both listed satisfies a 2-of-N alone. For `requiredApprovals` > 1 use the DID/identity form, which counts distinct approvers (DIV §4.4.6).
+**One-approver-per-key caveat.** In `PublicKeys` mode the identity IS the key, so an M-of-N quorum counts credentials, not people: one approver whose two registered credentials are both listed satisfies a 2-of-N alone. The same limitation weakens `requesterCannotApprove`: the witness's `signerDid` is an unverified string in this mode, so a requester holding a listed key can evade the four-eyes exclusion by naming a different `signerDid`. For `requiredApprovals` > 1 — or whenever four-eyes matters — use the DID/identity form, which counts distinct approvers (DIV §4.4.6).
 
 One byte of drift — a swapped target, an appended region — and verification fails, because the signature was over the exact bytes you just recomputed.
 
@@ -49,11 +49,16 @@ res := verify.VerifyApprovalReceipt(receipt, expected, verify.VerifyOptions{
 
 `RequireUserVerification` defaults to true (demands the User-Verified flag); set it to a non-nil `false` to accept mere user presence. Policy `AUTO_APPROVED` receipts carry no human signature and fail closed unless you opt in with `AllowAutoApproved: true`.
 
+## Offline approvals and delegations
+
+`VerifyDelegation(...)` checks a DIV §5a.5 delegation — a statement, signed in advance by the ordinary quorum, naming local operators who may approve one pre-declared action while the gateway is unreachable. It is a separate function because a delegation authorizes nothing on its own: `VerifyApprovalReceipt` refuses that payload type outright, with no opt-in. Pass the resulting `*VerifiedDelegation` as `VerifyOptions.Delegation` together with `AllowOffline: true` when verifying the offline approval the delegated operators signed. The 60-minute offline window and 72-hour delegation window are enforced here, not merely at mint.
+
 ## DEWP conformance
 
 This port implements the **DEWP Core primitives** ([`docs/DEWP.md`](../../docs/DEWP.md) §9.1):
 domain-separated hashing (`0x00`/`0x01`/`0x02`/`0x03`), two-tier Merkle tree construction with
-duplicate-last balancing, leaf-to-root inclusion proof verification, the `trust.intyga.audit.v1`
+duplicate-last balancing, leaf-to-root inclusion proof verification **bounded by leaf position**
+(§11.1 — range, path length, and self-pairing all checked), the `trust.intyga.audit.v1`
 canonical preimage, the `0x03` anchor digest, and **anchor signature (single-anchor, ES256)** —
 `VerifyAnchorSignature` checks one issuer's ES256 signature over the raw 32-byte anchor digest
 against a caller-resolved SPKI key. Byte parity with the TypeScript reference is locked by the
@@ -76,6 +81,25 @@ It does **not** implement, and a caller should not assume:
   vector section). TypeScript-only. This port's approval verifier correctly REFUSES the
   payload type — an authority authorizes no action — it just cannot verify one as governance
   evidence.
+- **DIV §5c Platform Hash-Only Intent** (`div-platform-intent` payloads and the
+  `platformIntentPayloads` vector section). TypeScript-only. This port's approval verifier
+  correctly REFUSES the payload type (pinned by the `platform-intent-refused-by-approval-verifier`
+  receipt fixture) — §5c requires a separate `verifyPlatformReceipt` entry point — it just cannot
+  verify one.
+- **The document-signing payload** (`canonicalDocumentPayload`). This port carries no document
+  canonicalization and does not assert the `documentPayloads` vector section — as `verify-rust`,
+  `verify-java` and `sdk-python` also deliberately do not: the section's own note marks it TS-only
+  (document signing is a gateway-side ceremony, not part of the relying-party offline surface).
+  Approval and ledger canonicalization are unaffected — it is document *signing* that is out of
+  scope here.
+
+One Go-specific precision about the canonicalizer. `Expected.Params` is a `map[string]interface{}`,
+and only the JSON shapes canonicalize: `map[string]interface{}`, `[]interface{}`, `[]string`,
+`string`, `float64`, `int`, `int64`, `bool`, `nil`. Anything else — a `uint64` id, a `float32`, a
+`map[string]string` — is REFUSED by type name rather than handed to `encoding/json`, which sorts
+object keys by UTF-8 bytes instead of UTF-16 code units, escapes U+2028/U+2029, and applies no
+portable-range check. The refusal reads `params are not canonicalizable: …`, deliberately distinct
+from the mismatch reason, so a marshalling mistake is never reported as tampering.
 
 For the rest of the surface — signed multi-anchor quorum, evidence bundles, gapless `tenantSeq`
 completeness over committed events, and the four-property verification model — use the TypeScript

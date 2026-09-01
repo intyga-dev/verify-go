@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // goldenDoc mirrors the parts of packages/mcp-schemas/vectors/canonical-vectors.json we consume.
@@ -139,6 +140,12 @@ func TestSharedGoldenReceiptVectors(t *testing.T) {
 		if result.OK != entry.ExpectOK {
 			t.Errorf("vector %q: expected ok=%v but got ok=%v (reason=%q)",
 				entry.Name, entry.ExpectOK, result.OK, result.Reason)
+		}
+		// Pinning the REASON, not just the refusal: `0 >= 0` makes DIV §5 step 7 true with nothing
+		// counted, so this receipt can be refused for the right rule or for none at all.
+		if entry.Name == "zero-required-approvals-refused" &&
+			!strings.Contains(result.Reason, "requiredApprovals must be an integer of at least 1") {
+			t.Errorf("vector %q: refused for the wrong rule (reason=%q)", entry.Name, result.Reason)
 		}
 		checked++
 	}
@@ -371,21 +378,36 @@ type receiptSuitesDoc struct {
 		} `json:"cases"`
 	} `json:"quorumReceipts"`
 	OfflineReceipts []struct {
-		Name                string          `json:"name"`
-		Receipt             ApprovalReceipt `json:"receipt"`
-		ExpectOkWithOptIn   bool            `json:"expectOkWithOptIn"`
-		RefusedWithoutOptIn bool            `json:"refusedWithoutOptIn"`
+		Name    string          `json:"name"`
+		Receipt ApprovalReceipt `json:"receipt"`
+		// AsOf is the evaluation time (DIV §5a.3 rule 3). A harness that drops it silently accepts
+		// the forward-dated case — which is exactly what this field exists to catch.
+		AsOf                string `json:"asOf"`
+		ExpectOkWithOptIn   bool   `json:"expectOkWithOptIn"`
+		RefusedWithoutOptIn bool   `json:"refusedWithoutOptIn"`
 	} `json:"offlineReceipts"`
 	DelegationReceipts struct {
 		Approvers []approverEntry `json:"approvers"`
 		Cases     []struct {
 			Name            string          `json:"name"`
 			Receipt         ApprovalReceipt `json:"receipt"`
+			AsOf            string          `json:"asOf"`
 			ExpectOk        bool            `json:"expectOk"`
 			DelegatedTo     []string        `json:"delegatedTo"`
 			DelegatedQuorum int             `json:"delegatedQuorum"`
 		} `json:"cases"`
 	} `json:"delegationReceipts"`
+}
+
+// mustAsOf resolves a case's committed evaluation time. Fatal rather than defaulted to now(): a
+// missing asOf would silently restore the position-blind behaviour the vectors pin against.
+func mustAsOf(t *testing.T, name, raw string) time.Time {
+	t.Helper()
+	at, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		t.Fatalf("%s: vector carries no usable asOf (%q): %v", name, raw, err)
+	}
+	return at
 }
 
 func loadReceiptSuites(t *testing.T) receiptSuitesDoc {
@@ -485,13 +507,24 @@ func TestSharedOfflineReceiptVectors(t *testing.T) {
 	anchor := ApproverTrustAnchor{PublicKeys: []string{doc.SignerKey.SpkiB64}}
 	for _, c := range doc.OfflineReceipts {
 		expected := expectationFor(c.Receipt, anchor)
-		withOptIn := VerifyApprovalReceipt(c.Receipt, expected, VerifyOptions{AllowOffline: true})
+		asOf := mustAsOf(t, c.Name, c.AsOf)
+		withOptIn := VerifyApprovalReceipt(c.Receipt, expected, VerifyOptions{AllowOffline: true, AsOf: asOf})
 		if withOptIn.OK != c.ExpectOkWithOptIn {
 			t.Errorf("%s: ok=%v want %v (reason=%q)", c.Name, withOptIn.OK, c.ExpectOkWithOptIn, withOptIn.Reason)
 		}
 		if c.RefusedWithoutOptIn {
-			if without := VerifyApprovalReceipt(c.Receipt, expected, VerifyOptions{}); without.OK {
+			if without := VerifyApprovalReceipt(c.Receipt, expected, VerifyOptions{AsOf: asOf}); without.OK {
 				t.Errorf("%s must be refused without the offline opt-in", c.Name)
+			}
+		}
+		// The forward-dating rule is outside AllowExpired's reach: that override re-examines a proof
+		// that WAS valid and has lapsed, which says nothing about one dated in the future.
+		if c.Name == "offline-forward-dated-refused" {
+			audit := VerifyApprovalReceipt(c.Receipt, expected,
+				VerifyOptions{AllowOffline: true, AllowExpired: true, AsOf: asOf})
+			if audit.OK || !strings.Contains(audit.Reason, "challenged in the future") {
+				t.Errorf("%s: audit override must not rescue a forward-dated proof (ok=%v reason=%q)",
+					c.Name, audit.OK, audit.Reason)
 			}
 		}
 	}
@@ -507,7 +540,8 @@ func TestSharedDelegationReceiptVectors(t *testing.T) {
 	}
 	anchor := didAnchor(doc.DelegationReceipts.Approvers)
 	for _, c := range doc.DelegationReceipts.Cases {
-		res, delegation := VerifyDelegation(c.Receipt, expectationFor(c.Receipt, anchor), VerifyOptions{})
+		res, delegation := VerifyDelegation(c.Receipt, expectationFor(c.Receipt, anchor),
+			VerifyOptions{AsOf: mustAsOf(t, c.Name, c.AsOf)})
 		if res.OK != c.ExpectOk {
 			t.Errorf("%s: ok=%v want %v (reason=%q)", c.Name, res.OK, c.ExpectOk, res.Reason)
 			continue
