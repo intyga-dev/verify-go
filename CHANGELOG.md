@@ -5,6 +5,34 @@ All notable changes to `github.com/intyga-dev/verify-go` are documented here. Th
 
 ## [Unreleased]
 
+- **Wire format: the DIV Intent Payload gained a REQUIRED `evidence` field, and it must be `null`.**
+  `div-intent-verification` and `div-offline-intent` now carry `"evidence":null` in the signed bytes
+  (DIV §4.3.4); `div-delegation`, `div-agent-authority` and `div-platform-intent` deliberately do
+  not. `null` is signed and load-bearing, exactly as `requester.attestation`'s null is: it is the
+  payload's explicit statement that the authorization was not conditioned on any external fact.
+  Verification refuses a payload whose `evidence` key is absent, and refuses any non-`null` value
+  rather than treating it as unconditioned — the same fail-closed-on-unknown rule as the
+  `signerClass` registry, and checked before Local Payload Reconstruction so an unsupported payload
+  shape does not surface as a parameter mismatch. Absent and `null` are distinguished explicitly;
+  collapsing them would make the check a no-op. All golden vectors were regenerated.
+
+- Align cross-language receipt and audit verification: platform receipts, agent-authority seals,
+  self-certifying DID trust, single/multi-event bundles, embedded ES256 signatures, tenant sequence
+  checks, checkpoint continuity, anchor quorum and Rekor. Shared executable fixtures cover valid
+  artifacts and refusals; no wire format changes.
+- Refuse unknown witness signature algorithms. Require identity-bound trust when the signed
+  `requesterCannotApprove` rule is set; key-only trust cannot enforce requester identity. That
+  refusal is now reported as itself: it was folded into a per-witness failure and surfaced as
+  "quorum not met", so the caller was told its quorum was short when the real answer is that its
+  trust anchor is the wrong shape for the signed policy. The verdict is unchanged — no witness
+  could ever be counted — and the reason now matches TypeScript, Rust, Java and Python. Applies to
+  both `VerifyApprovalReceipt` and `VerifyAgentAuthority`.
+- Report `brokenAt` for a partially chained roots file as the first UNCHAINED index instead of a
+  hardcoded 0. `brokenAt` is how an operator locates the splice, and entry 0 of a spliced file is
+  usually intact. Pinned by the new `mixed-chained-and-unchained` parity vector.
+
+- Recheck a verified delegation's expiry when it is used, under the approval call's `AsOf`, clock
+  skew and explicit `AllowExpired` forensic override.
 - **Refuse a Go value the canonicalizer cannot canonicalize, instead of guessing with
   `encoding/json`.** `StableStringify` fell through to `encoding/json` for any type outside the JSON
   shapes — so a `map[string]string`, a `float32` or a `uint64` in `Expected.Params` was serialized

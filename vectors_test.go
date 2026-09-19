@@ -530,6 +530,39 @@ func TestSharedOfflineReceiptVectors(t *testing.T) {
 	}
 }
 
+func TestCachedDelegationExpiryIsRecheckedWhenUsed(t *testing.T) {
+	doc := loadReceiptSuites(t)
+	c := doc.OfflineReceipts[0]
+	did := *c.Receipt.SignerDID
+	anchor := ApproverTrustAnchor{DIDs: []string{did}, ResolveKey: func(string) string { return doc.SignerKey.SpkiB64 }}
+	expected := expectationFor(c.Receipt, anchor)
+	d := &VerifiedDelegation{DelegatedTo: []string{did}, DelegatedQuorum: 1, Target: expected.Target,
+		ActionType: expected.ActionType, Params: expected.Params, ExpiresAt: "2998-12-31T23:59:00Z"}
+	verifyAt := func(at string, allowExpired bool) VerifyResult {
+		return VerifyApprovalReceipt(c.Receipt, expected, VerifyOptions{AllowOffline: true, AllowExpired: allowExpired,
+			AsOf: mustAsOf(t, "reuse", at), Delegation: d})
+	}
+	if got := verifyAt("2998-12-31T23:58:59Z", false); !got.OK {
+		t.Fatalf("reuse before expiry: %s", got.Reason)
+	}
+	if got := verifyAt("2998-12-31T23:59:30Z", false); !got.OK {
+		t.Fatalf("exact skew boundary: %s", got.Reason)
+	}
+	if got := verifyAt("2998-12-31T23:59:31Z", false); got.OK || !strings.Contains(got.Reason, "delegation has expired") {
+		t.Fatal("cached delegation reused after expiry")
+	}
+	if direct := VerifyApprovalReceipt(c.Receipt, expected, VerifyOptions{AllowOffline: true, AsOf: mustAsOf(t, "direct", "2998-12-31T23:59:31Z")}); !direct.OK {
+		t.Fatalf("control receipt must still be live: %s", direct.Reason)
+	}
+	if got := verifyAt("2998-12-31T23:59:31Z", true); !got.OK {
+		t.Fatalf("forensic override: %s", got.Reason)
+	}
+	d.ExpiresAt = "invalid"
+	if got := verifyAt("2998-12-31T23:58:59Z", true); got.OK {
+		t.Fatal("forensic override accepted invalid expiry")
+	}
+}
+
 // TestSharedDelegationReceiptVectors pins delegation sealing (ordinary quorum signs away approval
 // authority) and the 72-hour window cap, and that the accepted delegation reports the committed
 // operator set and quorum.
