@@ -134,6 +134,7 @@ func TestVerifierParityVectors(t *testing.T) {
 				pub = append(pub, keys[id.(string)].SpkiB64)
 			}
 			expected := Expected{Target: raw["target"].(string), Nonce: raw["nonce"].(string), ActionType: raw["actionType"].(string), Params: raw["params"].(map[string]interface{}), Approvers: ApproverTrustAnchor{PublicKeys: pub}}
+			if context, ok := raw["agentContext"].(map[string]interface{}); ok { expected.AgentContext = context }
 			result := VerifyApprovalReceipt(c.Receipt, expected, optTime(mapMerge(d.Approvals.Options, c.Options)))
 			if result.OK != c.OK {
 				t.Errorf("%s: %v %s", c.Name, result.OK, result.Reason)

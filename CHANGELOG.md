@@ -5,6 +5,10 @@ All notable changes to `github.com/intyga-dev/verify-go` are documented here. Th
 
 ## [Unreleased]
 
+- Use pinned `golang.org/x/text` to validate Unicode NFC in independently asserted agent context;
+  the Go verifier is no longer standard-library-only. `go.sum` records the module checksums.
+- **Wire format: DIV v1 agent intents now sign `action`, `agent`, `session`, `nbf`, and `exp` instead of ordinary `expiresAt`; `div-agent-authority` requires `parentReceiptHash` (null for a root).** Older §5b seals lacking that key cannot verify under this pre-release profile and must be re-sealed. All canonical producers, five verifier ports and vectors must move together; the ordinary HUMAN/SERVICE intent keeps `expiresAt`.
+
 - **Wire format: the DIV Intent Payload gained a REQUIRED `evidence` field, and it must be `null`.**
   `div-intent-verification` and `div-offline-intent` now carry `"evidence":null` in the signed bytes
   (DIV §4.3.4); `div-delegation`, `div-agent-authority` and `div-platform-intent` deliberately do
@@ -55,7 +59,7 @@ All notable changes to `github.com/intyga-dev/verify-go` are documented here. Th
 Initial public release.
 
 - Offline approval-receipt verification (ES256 and WebAuthn) against a caller-supplied trust
-  anchor — no Intyga secret, no network. Go standard library only.
+  anchor — no Intyga secret and no network.
 - Offline approvals (DIV §5a) behind the explicit `AllowOffline` opt-in, with the 60-minute window
   enforced at verification; `VerifyDelegation` for §5a.5 delegations, with the 72-hour window and
   the refusal to let a delegation authorize anything by itself.

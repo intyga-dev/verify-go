@@ -2,7 +2,7 @@
 
 Independently confirm that a human cryptographically approved **exactly** the action you are about to run — in your own process, with no Intyga secret and no network call. You recompute the canonical payload from your own parameters, check it byte-matches what was signed, and verify the human's **ES256** or **WebAuthn** signature.
 
-Zero third-party dependencies — Go standard library only. Its canonicalization is held byte-identical to the TypeScript, Python, Rust and Java verifiers by shared cross-language test vectors.
+One pinned third-party dependency, `golang.org/x/text`, supplies Unicode NFC validation for agent context. Cryptographic verification uses the Go standard library. Canonicalization is held byte-identical to the TypeScript, Python, Rust and Java verifiers by shared cross-language test vectors.
 
 > Part of the Intyga multi-language verifier set (TypeScript, Python, Go, Rust, Java).
 
@@ -74,7 +74,7 @@ shared golden vectors in `packages/mcp-schemas/vectors/ledger-vectors.json`. It 
 single and multi-entry proof bundles, embedded ES256 event signatures, gapless committed `tenantSeq`
 ranges, the `0x04` checkpoint continuity chain, and §5.3 anchor quorum. Anchor signatures support
 ES256, Ed25519 and RSA-PSS. Rekor anchors verify both the pinned-log-key SET and the hashedrekord
-binding to this checkpoint. RFC 3161 tokens are reported but do not count because this dependency-free
+binding to this checkpoint. RFC 3161 tokens are reported but do not count because this small verifier
 package intentionally carries no CMS parser; WEBHOOK and unknown anchor kinds fail closed.
 
 The following limits remain:

@@ -13,10 +13,21 @@ func TestExtendedCanonicalVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	var doc struct {
+		AgentIntents []struct {
+			Input struct {
+				Target, ActionType, ActionDescription, Nonce, ExpiresAt string
+				Params                                                  map[string]interface{}
+				Requester                                               RequesterIdentity
+				Requirement                                             ApprovalRequirement
+				AgentContext                                            map[string]interface{}
+			}
+			Expected string
+		} `json:"agentIntentPayloads"`
 		Agent []struct {
 			Input struct {
 				Target, Nonce, ActionDescription, AgentDID, SealedAt, ExpiresAt string
 				ActionPatterns                                                  []string
+				ParentReceiptHash                                               string
 				Requester                                                       RequesterIdentity
 				Requirement                                                     ApprovalRequirement
 			}
@@ -40,8 +51,15 @@ func TestExtendedCanonicalVectors(t *testing.T) {
 	if len(doc.Agent) == 0 || len(doc.Platform.Cases) == 0 {
 		t.Fatal("extended canonical vectors absent")
 	}
+	for _, c := range doc.AgentIntents {
+		got, e := CanonicalAgentIntentPayload(c.Input.Target, c.Input.ActionType, c.Input.ActionDescription,
+			c.Input.Params, c.Input.Requester, c.Input.Requirement, c.Input.Nonce, c.Input.ExpiresAt, c.Input.AgentContext)
+		if e != nil || got != c.Expected {
+			t.Fatalf("agent intent canonical drift: %v\n%s\n%s", e, got, c.Expected)
+		}
+	}
 	for _, c := range doc.Agent {
-		got, e := CanonicalAgentAuthorityPayload(c.Input.Target, c.Input.ActionPatterns, c.Input.ActionDescription, c.Input.AgentDID, c.Input.Requester, c.Input.Requirement, c.Input.Nonce, c.Input.SealedAt, c.Input.ExpiresAt)
+		got, e := CanonicalAgentAuthorityPayload(c.Input.Target, c.Input.ActionPatterns, c.Input.ActionDescription, c.Input.AgentDID, c.Input.Requester, c.Input.Requirement, c.Input.Nonce, c.Input.SealedAt, c.Input.ExpiresAt, c.Input.ParentReceiptHash)
 		if e != nil || got != c.Expected {
 			t.Fatalf("agent authority canonical drift: %v\n%s\n%s", e, got, c.Expected)
 		}
