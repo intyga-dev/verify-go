@@ -26,13 +26,33 @@ res := verify.VerifyApprovalReceipt(receipt, verify.Expected{
 	ActionType: "wipe_production",
 	Params:     map[string]interface{}{"target": "prod-db-1"},
 	Approvers:  verify.ApproverTrustAnchor{PublicKeys: []string{approverSpkiB64}},
-}, verify.VerifyOptions{})
+}, verify.VerifyOptions{
+	// REQUIRED for passkey receipts (the normal flow): the approval console's exact origin and
+	// RP ID, from the trust-anchor file exported in the console (its `webauthn` block).
+	ExpectedOrigin: os.Getenv("INTYGA_WEBAUTHN_ORIGIN"),
+	ExpectedRpID:   os.Getenv("INTYGA_WEBAUTHN_RP_ID"),
+})
 if !res.OK {
 	log.Fatalf("refusing to proceed: %s", res.Reason)
 }
 ```
 
-**One-approver-per-key caveat.** In `PublicKeys` mode the identity IS the key, so an M-of-N quorum counts credentials, not people: one approver whose two registered credentials are both listed satisfies a 2-of-N alone. A signed `requesterCannotApprove` rule requires DID/identity trust; key-only anchors are refused because `signerDid` is unverified in that mode. For `requiredApprovals` > 1, use the DID/identity form, which counts distinct approvers (DIV §4.4.6).
+**Quorum trust.** Key-only trust is accepted only for a one-approval requirement without
+`requesterCannotApprove`. Multi-approver quorums and separation of duties require a DID/identity
+anchor and otherwise fail closed (DIV §5 step 3b). Several credentials for one DID count as one
+approver. Delegations require identity trust regardless of quorum size.
+
+**Requirement floor (DIV §5 step 3d).** The signed `requirement` is the signers' own statement: its
+signature stops a third party from altering it, not the approvers it constrains from writing a weaker
+one. One approver who is also the requester can sign a 1-of-1 payload alone. **Without a floor this
+verifier proves only the quorum the signers stated.** When you know the rule, pass it as
+`Expected.Requirement = &verify.RequirementFloor{RequiredApprovals: 3, RequesterCannotApprove: true}`
+(`AgentAuthorityExpectation.Requirement` for seals). Nil keeps the previous behaviour.
+A signed requirement weaker on any field — fewer approvals, no four-eyes or no hardware key where the
+floor demands one — is refused before any signature is counted, with a reason starting "signed
+requirement is weaker than the relying party's policy"; an equal or stricter one passes. A malformed
+floor (quorum below 1) is refused rather than ignored. The same field exists on the delegation
+expectation (pass the ordinary rule) and the agent-authority expectation (your sealing policy).
 
 One byte of drift — a swapped target, an appended region — and verification fails, because the signature was over the exact bytes you just recomputed.
 
@@ -47,7 +67,7 @@ res := verify.VerifyApprovalReceipt(receipt, expected, verify.VerifyOptions{
 })
 ```
 
-`RequireUserVerification` defaults to true (demands the User-Verified flag); set it to a non-nil `false` to accept mere user presence. Policy `AUTO_APPROVED` receipts carry no human signature and fail closed unless you opt in with `AllowAutoApproved: true`.
+`RequireUserVerification` defaults to true (demands the User-Verified flag); set it to a non-nil `false` to accept mere user presence (`VerifyPlatformReceipt` ignores it: DIV §5c.3 requires user verification unconditionally). Policy `AUTO_APPROVED` receipts carry no human signature and fail closed unless you opt in with `AllowAutoApproved: true`.
 
 ## Offline approvals and delegations
 
@@ -74,8 +94,14 @@ shared golden vectors in `packages/mcp-schemas/vectors/ledger-vectors.json`. It 
 single and multi-entry proof bundles, embedded ES256 event signatures, gapless committed `tenantSeq`
 ranges, the `0x04` checkpoint continuity chain, and §5.3 anchor quorum. Anchor signatures support
 ES256, Ed25519 and RSA-PSS. Rekor anchors verify both the pinned-log-key SET and the hashedrekord
-binding to this checkpoint. RFC 3161 tokens are reported but do not count because this small verifier
-package intentionally carries no CMS parser; WEBHOOK and unknown anchor kinds fail closed.
+binding to this checkpoint. Configure `RekorIssuer` whenever a policy trusts multiple issuers;
+legacy unscoped Rekor trust is accepted only for a single-issuer policy. RFC 3161 anchors count only with issuer-specific
+`ExternalAnchorKeys.RFC3161` trust and OpenSSL 3. `VerifyRfc3161Anchor` isolates OpenSSL from host
+trust and network fetching, pins the signer certificate, and requires offline CRL checking or
+explicit `unchecked` revocation. CMS signer digests are restricted to SHA-256, SHA-384, or SHA-512.
+`VerificationTime` selects the evaluation instant; its default
+rounds the wall clock up by at most one second for fresh fractional timestamps. Historical results
+depend on retained CA, intermediate, and CRL material. WEBHOOK and unknown anchors fail closed.
 
 The following limits remain:
 

@@ -16,7 +16,7 @@ func signedTestAnchor(t *testing.T, root, issuer string) (SignedAnchor, string) 
 	if e != nil {
 		t.Fatal(e)
 	}
-	a := SignedAnchor{AnchorInput: AnchorInput{root, "2026-09-16T00:00:00Z", issuer, "ES256"}, KeyID: "k"}
+	a := SignedAnchor{AnchorInput: AnchorInput{root, "2026-09-16T00:00:00.000Z", issuer, "ES256", "1", "10", strings64("c")}, KeyID: "k"}
 	d := anchorDigest(a.AnchorInput)
 	h := sha256.Sum256(d[:])
 	sig, e := ecdsa.SignASN1(rand.Reader, k, h[:])
@@ -31,7 +31,7 @@ func signedTestAnchor(t *testing.T, root, issuer string) (SignedAnchor, string) 
 func TestAnchorQuorumAndDivergence(t *testing.T) {
 	root := strings64("a")
 	a, key := signedTestAnchor(t, root, "issuer-a")
-	q := VerifyAnchorQuorum([]SignedAnchor{a}, root, AnchorPolicy{1, []string{"issuer-a"}, "N_OF_M"}, func(SignedAnchor) string { return key }, nil, ExternalAnchorKeys{})
+	q := VerifyAnchorQuorum([]SignedAnchor{a}, root, AnchorPolicy{RequiredAnchors: 1, TrustedIssuers: []string{"issuer-a"}, Quorum: "N_OF_M"}, func(SignedAnchor) string { return key }, nil, ExternalAnchorKeys{})
 	if !q.OK || len(q.VerifiedIssuers) != 1 {
 		t.Fatalf("quorum failed: %+v", q)
 	}
@@ -39,9 +39,39 @@ func TestAnchorQuorumAndDivergence(t *testing.T) {
 	other.DailyRoot = strings64("b")
 	d := anchorDigest(other.AnchorInput)
 	_ = d // old signature must not create divergence
-	q = VerifyAnchorQuorum(nil, root, AnchorPolicy{1, []string{"issuer-a"}, "N_OF_M"}, func(SignedAnchor) string { return key }, []SignedAnchor{other}, ExternalAnchorKeys{})
+	q = VerifyAnchorQuorum(nil, root, AnchorPolicy{RequiredAnchors: 1, TrustedIssuers: []string{"issuer-a"}, Quorum: "N_OF_M"}, func(SignedAnchor) string { return key }, []SignedAnchor{other}, ExternalAnchorKeys{})
 	if q.Divergence {
 		t.Fatal("invalid signature declared divergence")
+	}
+}
+
+func TestAnchorMissingPositionIsRefused(t *testing.T) {
+	root := strings64("a")
+	a, key := signedTestAnchor(t, root, "issuer-a")
+	a.ChainHash = ""
+	if VerifyAnchorSignature(a, key) {
+		t.Fatal("an anchor without its chain hash must not verify")
+	}
+	if _, ok := ParseAnchorTimestampMs("2026-02-30T00:00:00.000Z"); ok {
+		t.Fatal("an impossible date must not parse")
+	}
+	if _, ok := ParseAnchorTimestampMs("2026-09-16T00:00:00Z"); ok {
+		t.Fatal("a timestamp without milliseconds is not the DEWP §4.3 form")
+	}
+}
+
+func TestRekorTrustCannotBeReattributedAcrossIssuers(t *testing.T) {
+	if rekorIssuerAllowed("rekor.example", "tsa.example", 2) {
+		t.Fatal("pinned Rekor issuer must not authorize a TSA issuer")
+	}
+	if rekorIssuerAllowed("", "rekor.example", 2) {
+		t.Fatal("legacy unscoped Rekor trust must fail for multi-issuer policy")
+	}
+	if rekorIssuerAllowed("", "", 2) {
+		t.Fatal("omitted Rekor issuer must not pin an empty anchor issuer in a multi-issuer policy")
+	}
+	if !rekorIssuerAllowed("", "rekor.example", 1) {
+		t.Fatal("single-issuer legacy policy should imply scope")
 	}
 }
 
@@ -84,12 +114,17 @@ func TestVerifyBundleRequiresIndependentRoot(t *testing.T) {
 	block := leaf
 	root := HashLeaf(block)
 	proof := InclusionProof{Leaf: leaf, BlockRoot: block, LeafIndex: 0, BlockLeafCount: 1, CheckpointRoot: root, CheckpointLeafIndex: 0, CheckpointLeafCount: 1}
-	b := ProofBundle{Kind: BundleKind, Proof: proof, Event: BundleEvent{Seq: "1"}}
+	b := ProofBundle{Kind: BundleKind, Version: 1, Proof: proof, Event: BundleEvent{Seq: "1"}}
 	if v := VerifyBundle(b, BundleVerifyOptions{}); v.OK || v.RootSource != "self-asserted" {
 		t.Fatalf("self asserted bundle trusted: %+v", v)
 	}
-	if v := VerifyBundle(b, BundleVerifyOptions{TrustedRoot: root}); !v.OK || !v.Properties.CommitmentVerified {
-		t.Fatalf("independent proof rejected: %+v", v)
+	v := VerifyBundle(b, BundleVerifyOptions{TrustedRoot: root})
+	if !v.OK || !v.Properties.CommitmentVerified {
+		t.Fatalf("caller-supplied proof rejected: %+v", v)
+	}
+	// The verifier cannot tell where a supplied root came from, so it never calls it "independent".
+	if v.RootSource != "caller-supplied" {
+		t.Fatalf("rootSource %q", v.RootSource)
 	}
 }
 
