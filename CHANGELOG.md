@@ -5,6 +5,8 @@ All notable changes to `github.com/intyga-dev/verify-go` are documented here. Th
 
 ## [Unreleased]
 
+## [1.0.0]
+
 - Verify profile-carried WebAuthn audit signatures with caller-trusted signer keys, origin and RP ID.
   Report explicit per-event signature status and key trust; add strict signature acceptance for
   single and bulk evidence. Audit signature checks do not replace full approval-receipt verification.
@@ -113,12 +115,11 @@ All notable changes to `github.com/intyga-dev/verify-go` are documented here. Th
   `requiredApprovals`" is satisfied vacuously by 0, so the minimum is now enforced explicitly
   instead of by an undocumented floor.
 
-## [1.0.0]
 
 Initial public release.
 
 - Offline approval-receipt verification (ES256 and WebAuthn) against a caller-supplied trust
-  anchor — no Intyga secret and no network.
+  anchor — no INTYGA secret and no network.
 - Offline approvals (DIV §5a) behind the explicit `AllowOffline` opt-in, with the 60-minute window
   enforced at verification; `VerifyDelegation` for §5a.5 delegations, with the 72-hour window and
   the refusal to let a delegation authorize anything by itself.
