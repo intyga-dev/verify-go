@@ -5,6 +5,11 @@ All notable changes to `github.com/intyga-dev/verify-go` are documented here. Th
 
 ## [Unreleased]
 
+## [1.1.0]
+
+- No code change. The matched set moves together (`pnpm test:versions`); this release carries the
+  new `@intyga/sdk` CLI options and the `require-approval` Action update.
+
 ## [1.0.0]
 
 - Verify profile-carried WebAuthn audit signatures with caller-trusted signer keys, origin and RP ID.
