@@ -1,5 +1,7 @@
 # verify-go — Offline INTYGA receipt verification for Go
 
+[![Release gated by INTYGA](https://www.intyga.com/badges/release-gated-by-intyga.svg)](https://www.intyga.com/use-cases/package-publishing)
+
 Independently confirm that a human cryptographically approved **exactly** the action you are about to run — in your own process, with no INTYGA secret and no network call. You recompute the canonical payload from your own parameters, check it byte-matches what was signed, and verify the human's **ES256** or **WebAuthn** signature.
 
 One pinned third-party dependency, `golang.org/x/text`, supplies Unicode NFC validation for agent context. Cryptographic verification uses the Go standard library. Canonicalization is held byte-identical to the TypeScript, Python, Rust and Java verifiers by shared cross-language test vectors.
