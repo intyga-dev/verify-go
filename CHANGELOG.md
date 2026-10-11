@@ -5,6 +5,22 @@ All notable changes to `github.com/intyga-dev/verify-go` are documented here. Th
 
 ## [Unreleased]
 
+## [2.0.0]
+
+- Bind delegation verification to the independently expected requester; a workload cannot reuse
+  another workload's otherwise valid delegation.
+
+- **Breaking: tenant-bound DIV v2 receipts.** All five payload kinds bind an independently
+  supplied, nonempty tenant identifier. A tenant expectation refuses v1; omitting it permits
+  historical v1 verification only. Upgrade before the gateway begins issuing v2 receipts.
+- Reconstruct v2 signing bytes without a JSON parse/serialize round trip. Shared vectors pin
+  fractional parameters, requester mismatches, legacy-kind refusal and tenant-bound authority chains.
+- Count quorum by distinct public-key value as well as identity, including equivalent supported
+  key encodings. Delegated-agent receipt digests use UTF-16 witness ordering in every port.
+- **Go import migration:** use `github.com/intyga-dev/verify-go/v2`. `Expected.TenantID` is
+  `*string`: nil omits the expectation, while a pointer to an empty string is refused.
+- Enforce `Expected.RequesterDID` when supplied.
+
 ## [1.2.0]
 
 - No code change. The matched set moves together (`pnpm test:versions`); this release carries the

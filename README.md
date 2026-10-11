@@ -11,18 +11,25 @@ One pinned third-party dependency, `golang.org/x/text`, supplies Unicode NFC val
 ## Install
 
 ```sh
-go get github.com/intyga-dev/verify-go
+go get github.com/intyga-dev/verify-go/v2
 ```
 
 ## Verify an approval receipt
 
 ```go
-import verify "github.com/intyga-dev/verify-go"
+import verify "github.com/intyga-dev/verify-go/v2"
 
-// `expected` is what you are ABOUT to execute. `Target` is YOUR OWN identifier (Target
+tenantID := os.Getenv("INTYGA_TENANT_ID")
+if tenantID == "" {
+	log.Fatal("INTYGA_TENANT_ID is required")
+}
+
+// `expected` is what you are ABOUT to execute. `TenantID` is YOUR configured workspace,
+// `Target` is YOUR OWN identifier (Target
 // Isolation), `Nonce` is the challenge YOU issued, and `Approvers` is the key set YOU trust —
 // all required, and none of them ever read from the receipt.
 res := verify.VerifyApprovalReceipt(receipt, verify.Expected{
+	TenantID:   &tenantID,
 	Target:     "prod-db-cluster-01",
 	Nonce:      nonce,
 	ActionType: "wipe_production",
@@ -38,6 +45,11 @@ if !res.OK {
 	log.Fatalf("refusing to proceed: %s", res.Reason)
 }
 ```
+
+Tenant-bound DIV v2 receipts require `TenantID` from independently trusted configuration or an
+adopted trust anchor. The signed value must match exactly; never read the expectation from the
+receipt. This also applies to platform receipts, delegations and authority chains. Historical v1
+receipts remain verifiable only without a tenant expectation and cannot satisfy a tenant-bound gate.
 
 **Quorum trust.** Key-only trust is accepted only for a one-approval requirement without
 `requesterCannotApprove`. Multi-approver quorums and separation of duties require a DID/identity

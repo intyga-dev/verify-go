@@ -315,15 +315,40 @@ func runEvidenceCases(t *testing.T, cases []parityCase, keys map[string]parityKe
 func runApprovalCases(t *testing.T, sec paritySection, keys map[string]parityKey) {
 	for _, c := range sec.Cases {
 		raw := mapMerge(sec.Expected, c.Expected)
-		pub := []string{}
-		for _, id := range raw["approverKeyIds"].([]interface{}) {
-			if c.ApproverKeyEncoding == "cose" {
-				pub = append(pub, keys[id.(string)].CoseB64)
-			} else {
-				pub = append(pub, keys[id.(string)].SpkiB64)
+		anchor := ApproverTrustAnchor{}
+		if table, ok := raw["approverDids"].(map[string]interface{}); ok {
+			coseDids := map[string]bool{}
+			if values, ok := raw["approverCoseDids"].([]interface{}); ok {
+				for _, did := range values {
+					coseDids[did.(string)] = true
+				}
 			}
+			dids := []string{}
+			resolved := map[string][]string{}
+			for did, ids := range table {
+				dids = append(dids, did)
+				for _, rawID := range ids.([]interface{}) {
+					key := keys[rawID.(string)]
+					if coseDids[did] {
+						resolved[did] = append(resolved[did], key.CoseB64)
+					} else {
+						resolved[did] = append(resolved[did], key.SpkiB64)
+					}
+				}
+			}
+			anchor = ApproverTrustAnchor{DIDs: dids, ResolveKeys: func(did string) []string { return resolved[did] }}
+		} else {
+			pub := []string{}
+			for _, id := range raw["approverKeyIds"].([]interface{}) {
+				if c.ApproverKeyEncoding == "cose" {
+					pub = append(pub, keys[id.(string)].CoseB64)
+				} else {
+					pub = append(pub, keys[id.(string)].SpkiB64)
+				}
+			}
+			anchor = ApproverTrustAnchor{PublicKeys: pub}
 		}
-		expected := Expected{Target: raw["target"].(string), Nonce: raw["nonce"].(string), ActionType: raw["actionType"].(string), Params: raw["params"].(map[string]interface{}), Approvers: ApproverTrustAnchor{PublicKeys: pub}, Requirement: parityFloor(raw)}
+		expected := Expected{Target: raw["target"].(string), Nonce: raw["nonce"].(string), ActionType: raw["actionType"].(string), Params: raw["params"].(map[string]interface{}), Approvers: anchor, Requirement: parityFloor(raw)}
 		if context, ok := raw["agentContext"].(map[string]interface{}); ok {
 			expected.AgentContext = context
 		}

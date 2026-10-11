@@ -537,7 +537,8 @@ func TestCachedDelegationExpiryIsRecheckedWhenUsed(t *testing.T) {
 	anchor := ApproverTrustAnchor{DIDs: []string{did}, ResolveKey: func(string) string { return doc.SignerKey.SpkiB64 }}
 	expected := expectationFor(c.Receipt, anchor)
 	d := &VerifiedDelegation{DelegatedTo: []string{did}, DelegatedQuorum: 1, Target: expected.Target,
-		ActionType: expected.ActionType, Params: expected.Params, ExpiresAt: "2998-12-31T23:59:00Z"}
+		ActionType: expected.ActionType, Params: expected.Params, ExpiresAt: "2998-12-31T23:59:00Z",
+		RequesterDID: c.Receipt.Requester.DID}
 	verifyAt := func(at string, allowExpired bool) VerifyResult {
 		return VerifyApprovalReceipt(c.Receipt, expected, VerifyOptions{AllowOffline: true, AllowExpired: allowExpired,
 			AsOf: mustAsOf(t, "reuse", at), Delegation: d})
