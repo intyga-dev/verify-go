@@ -5,6 +5,50 @@ All notable changes to `github.com/intyga-dev/verify-go` are documented here. Th
 
 ## [Unreleased]
 
+## [2.1.0]
+
+- **DEWP 1.1 §4.7 execution evidence.** `VerifyEvidenceBundle` reports `Execution` (options
+  `EvidencePolicy`, `RequireExecutionConfirmed`, `ExecutionNow`, `EvidenceSkewSeconds`,
+  `MaxEvidenceWindowSeconds`); `VerifyBundle` reports a single proof's check
+  (`BundleVerifyOptions.EvidencePolicy`). `VerifyAuditSignatureWithEvidence` keeps evidence-source
+  trust separate from approver trust; `VerifyAuditSignature` delegates to it. The approval verifier
+  refuses the statement type.
+- **DEWP 1.1 pre-publication review (October 2026), all within §4.7.** The statement has nine
+  members: `sampledAt` (when the measurement was taken; the window is evaluated on it, and it must not
+  be later than `observedAt`) and `sequence` (the source's gapless per-log counter, an integer 1..2^53−1;
+  `418.0`, `418.5` and `"418"` are malformed). `ExecutionEvidencePolicy.TrustedSources` holds
+  `TrustedSourceKey` values — a bare SPKI string or `{key, notBefore?, notAfter?}` — and a bounded key
+  establishes trust only at the record's anchored time (earliest counting Rekor/TSA witness, §4.7.5),
+  which both bundle verifiers now compute; `ExecutionEvaluationOptions.AnchoredTime` is the hook.
+  Binding uses any Dispatch Record whose hash matches (an early record with another hash no longer
+  unbinds; disagreeing records are `DispatchConflict`); the window is `min(evidenceDeadline, createdAt +
+  MaxEvidenceWindowSeconds)` (default 24 h, `WindowCapped`), the default skew is 30 s; every Approval
+  Record's nonce is reported (`not_reported`); a trusted, bound, late `contradicted` is
+  `LateContradiction`; `Sources` reports per-source `First`/`Last`/`Gaps`/`Divergent`; each check
+  carries `Source` and `Sequence`. `RequireExecutionConfirmed` also fails on a dispatch conflict, a gap
+  or a divergence. `EvaluateExecutionEvidence` takes `ExecutionEvaluationOptions`;
+  `CheckExecutionEvidenceLeaf` and `VerifyEvidenceSignature` take the anchored time.
+- **§4.7 fail-closed pass (the security sweep of the reference, October 2026).** A record's anchored
+  time comes only from the checkpoint its OWN inclusion proof names — the earliest counting Rekor/TSA
+  witness over that root — and only when its seq lies within the range those anchors were held to
+  (your `TrustedCheckpoints` record where it states one, else the bundle's first checkpoint for the
+  root); the verifier never scans other checkpoints for one that "covers" the seq. A bundle that lists
+  one root twice with differing `id`/`seqStart`/`seqEnd`/`entryCount`/`anchoredAt`/`chainHash`/
+  `prevChainHash` fails (identical duplicates are tolerated). A `TrustedSourceKey` decoded from JSON
+  with any member beside `key`/`notBefore`/`notAfter`, or with a bound that is present but not a
+  string, is kept and marked malformed (`Malformed()`): its signature verifies, it establishes no
+  trust, and the reason names the member or bound; an entry with no usable key is dropped. New §4.7.4
+  finding `UntrustedContradiction` / `UntrustedContradicted`: a bound, in-window or late `contradicted` whose
+  signature verified under a provisioned key that established no trust (never under an embedded
+  key). `RequireExecutionConfirmed` now also fails on any late or untrusted contradiction.
+  `VerifyAuditSignatureWithEvidence` takes the record's anchored time (nil when none) and both bundle
+  verifiers run it after the anchor quorum, so `Signatures.Checks` and `Execution.Checks` agree on a
+  bounded key; `VerifyBundle` reports its signature and properties on anchor divergence too. A
+  negative `EvidenceSkewSeconds` / `MaxEvidenceWindowSeconds` falls back to the default.
+- Keep bound, late contradictions signed by caller-provisioned keys as untrusted-contradiction
+  findings when key trust is not established. Requiring confirmed execution rejects them even
+  alongside a trusted confirmation; execution status and trust are unchanged.
+
 ## [2.0.0]
 
 - Bind delegation verification to the independently expected requester; a workload cannot reuse

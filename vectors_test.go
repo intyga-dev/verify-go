@@ -141,6 +141,12 @@ func TestSharedGoldenReceiptVectors(t *testing.T) {
 			t.Errorf("vector %q: expected ok=%v but got ok=%v (reason=%q)",
 				entry.Name, entry.ExpectOK, result.OK, result.Reason)
 		}
+		// A DEWP §4.7 statement must be refused for being a statement, not merely for failing some
+		// later step: "payload is not a div-intent-verification" would pass the ok check above too.
+		if entry.Name == "execution-evidence-refused-by-approval-verifier" &&
+			!strings.Contains(result.Reason, "execution-evidence statement") {
+			t.Errorf("vector %q: refused for the wrong reason %q", entry.Name, result.Reason)
+		}
 		// Pinning the REASON, not just the refusal: `0 >= 0` makes DIV §5 step 7 true with nothing
 		// counted, so this receipt can be refused for the right rule or for none at all.
 		if entry.Name == "zero-required-approvals-refused" &&

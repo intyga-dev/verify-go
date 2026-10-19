@@ -179,3 +179,40 @@ unsigned, redacted, incomplete and invalid entries fail that option. Anchor quor
 
 Set `SignaturePolicy: &AuditSignaturePolicy{TrustedSigners: ..., ExpectedOrigin: ..., ExpectedRpID: ...}`
 and `RequireSignatures: true` in bundle/evidence options.
+
+### Execution evidence (DEWP 1.1 §4.7)
+
+`VerifyEvidenceBundle` reports `Execution`: a §4.7.3 check per Evidence Record and a §4.7.4 status
+(`confirmed`, `contradicted`, `unconfirmed`, `pending`, `not_reported`) for every approval nonce an
+Approval, Dispatch or Evidence Record names — a silent approval reads `not_reported`. Evidence-source
+trust is `EvidencePolicy` (`ExecutionEvidencePolicy`), separate from approver trust: an approver key
+never vouches for a statement and a source key never vouches for an approval. Each key is a bare
+base64 SPKI P-256 key or a `TrustedSourceKey` with `NotBefore`/`NotAfter` (in JSON, a string or an
+object with exactly the members `key`, `notBefore`, `notAfter`). A bounded key establishes trust only
+when the record's **anchored time** lies inside the interval — the earliest Rekor/TSA witness time
+among the anchors that counted toward quorum for the checkpoint the record's **own** inclusion proof
+names, and only when its seq lies within the range those anchors were held to (your
+`TrustedCheckpoints` record where it states one, else the bundle's first checkpoint for that root);
+never another checkpoint's witness, and never the statement's own `observedAt`/`sampledAt`. A bundle
+listing one root twice with differing fields is refused. A JSON key entry with any other member, or a
+bound that is not a string, still verifies the signature but establishes no trust (`Malformed()`
+says why); an entry with no usable key is dropped. Options: `ExecutionNow` (evaluation time, an
+input so a status is reproducible), `EvidenceSkewSeconds` (default 30, clock error only),
+`MaxEvidenceWindowSeconds` (default 86400; the dispatch's own deadline is cut to it and
+`WindowCapped` says so — a negative value for either falls back to its default) and
+`RequireExecutionConfirmed`.
+
+A statement binds to any Dispatch Record whose `payloadSha256` matches; Dispatch Records for one nonce
+that disagree are reported as `DispatchConflict`. The window is evaluated on the statement's
+`sampledAt`; a trusted, bound `contradicted` sampled after the effective deadline is `stale` but
+reported as `LateContradiction`. A bound, in-window or late `contradicted` whose signature verified under a
+provisioned key that established no trust — no anchored time, outside the interval, or a malformed
+entry — is reported as `UntrustedContradiction` (never under an embedded key). Every statement carries
+a per-source `sequence`; `Sources` reports each source's `First`/`Last`, the `Gaps` between them and
+any `Divergent` counter value signed over two different statements. `RequireExecutionConfirmed` fails
+on any nonce not `confirmed`, on an empty report, and on any dispatch conflict, gap, divergence, late
+contradiction or untrusted contradiction. The §4.6.1 signature report (`Signatures.Checks`,
+`VerifyAuditSignatureWithEvidence`) places a bounded key at the same anchored time, so it and the
+statement check agree. `VerifyBundle` evaluates a single proof's statement through step 4 only and
+reports it `unbound`; its anchored time needs `TrustedCheckpoint`. `confirmed` means a
+caller-trusted source signed an in-window statement — not physical truth (§4.7.6).

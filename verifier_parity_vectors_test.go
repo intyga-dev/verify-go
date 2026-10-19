@@ -416,3 +416,188 @@ func runAuthorityCases(t *testing.T, sec paritySection, keys map[string]parityKe
 		}
 	}
 }
+
+// DEWP §4.7 (version 1.1): the shared executionEvidence section, run exactly as TS runs it.
+func TestExecutionEvidenceParityVectors(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("vectors", "verifier-parity-vectors.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type statusRow struct {
+		Seq     string `json:"seq"`
+		Status  string `json:"status"`
+		Trusted bool   `json:"trusted"`
+	}
+	var doc struct {
+		ExecutionEvidence struct {
+			Cases []struct {
+				Name   string          `json:"name"`
+				Bundle json.RawMessage `json:"bundle"`
+				// Policy is the anchor policy of the anchored-time cases (DEWP §4.7.5): the bundle's
+				// checkpoint carries a Rekor-witnessed anchor and options.rekorSpki pins the log key.
+				Policy  *AnchorPolicy `json:"policy"`
+				Options struct {
+					TrustedRoots              []string                 `json:"trustedRoots"`
+					EvidencePolicy            *ExecutionEvidencePolicy `json:"evidencePolicy"`
+					SignaturePolicy           *AuditSignaturePolicy    `json:"signaturePolicy"`
+					Now                       string                   `json:"now"`
+					SkewSeconds               *int                     `json:"skewSeconds"`
+					MaxWindowSeconds          *int                     `json:"maxWindowSeconds"`
+					RequireExecutionConfirmed bool                     `json:"requireExecutionConfirmed"`
+					RekorSpki                 string                   `json:"rekorSpki"`
+				} `json:"options"`
+				OK        bool `json:"ok"`
+				Execution struct {
+					ByNonce  map[string]string `json:"byNonce"`
+					Checks   []statusRow       `json:"checks"`
+					Findings *struct {
+						LateContradicted      *[]string                   `json:"lateContradicted"`
+						UntrustedContradicted *[]string                   `json:"untrustedContradicted"`
+						DispatchConflicts     *[]string                   `json:"dispatchConflicts"`
+						WindowCapped          map[string]bool             `json:"windowCapped"`
+						Sources               map[string]SourceContinuity `json:"sources"`
+					} `json:"findings"`
+				} `json:"execution"`
+				Signatures []statusRow `json:"signatures"`
+			} `json:"cases"`
+			Proofs []struct {
+				Name    string          `json:"name"`
+				Bundle  json.RawMessage `json:"bundle"`
+				Options struct {
+					TrustedRoot    string                   `json:"trustedRoot"`
+					EvidencePolicy *ExecutionEvidencePolicy `json:"evidencePolicy"`
+				} `json:"options"`
+				Execution *struct {
+					Status  string `json:"status"`
+					Trusted bool   `json:"trusted"`
+				} `json:"execution"`
+			} `json:"proofs"`
+			Statements []struct {
+				Name  string `json:"name"`
+				Bytes string `json:"bytes"`
+				OK    bool   `json:"ok"`
+			} `json:"statements"`
+			Builder []struct {
+				Name  string `json:"name"`
+				Input struct {
+					Nonce         string                 `json:"nonce"`
+					PayloadSha256 string                 `json:"payloadSha256"`
+					Source        string                 `json:"source"`
+					Verdict       string                 `json:"verdict"`
+					ObservedAt    string                 `json:"observedAt"`
+					SampledAt     string                 `json:"sampledAt"`
+					Sequence      int64                  `json:"sequence"`
+					Observation   map[string]interface{} `json:"observation"`
+				} `json:"input"`
+				Bytes string `json:"bytes"`
+			} `json:"builder"`
+		} `json:"executionEvidence"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	section := doc.ExecutionEvidence
+	if len(section.Cases) == 0 || len(section.Proofs) == 0 {
+		t.Fatal("executionEvidence section is empty")
+	}
+	for _, c := range section.Cases {
+		var bundle EvidenceBundle
+		if err := json.Unmarshal(c.Bundle, &bundle); err != nil {
+			t.Fatalf("%s: %v", c.Name, err)
+		}
+		now, err := time.Parse(time.RFC3339Nano, c.Options.Now)
+		if err != nil {
+			t.Fatalf("%s: %v", c.Name, err)
+		}
+		r := VerifyEvidenceBundle(bundle, EvidenceVerifyOptions{
+			TrustedRoots: c.Options.TrustedRoots, EvidencePolicy: c.Options.EvidencePolicy,
+			SignaturePolicy: c.Options.SignaturePolicy, ExecutionNow: &now, EvidenceSkewSeconds: c.Options.SkewSeconds,
+			MaxEvidenceWindowSeconds: c.Options.MaxWindowSeconds, RequireExecutionConfirmed: c.Options.RequireExecutionConfirmed,
+			AnchorPolicy: c.Policy, ExternalKeys: ExternalAnchorKeys{Rekor: c.Options.RekorSpki},
+		})
+		if r.OK != c.OK {
+			t.Errorf("%s: ok=%v want %v (%v)", c.Name, r.OK, c.OK, r.Failed)
+		}
+		byNonce := map[string]string{}
+		for n, v := range r.Execution.ByNonce {
+			byNonce[n] = v.Status
+		}
+		if len(byNonce) != len(c.Execution.ByNonce) || (len(byNonce) > 0 && !reflect.DeepEqual(byNonce, c.Execution.ByNonce)) {
+			t.Errorf("%s: byNonce %v want %v", c.Name, byNonce, c.Execution.ByNonce)
+		}
+		checks := []statusRow{}
+		reasons := []string{}
+		for _, k := range r.Execution.Checks {
+			checks = append(checks, statusRow{k.Seq, k.Status, k.Trusted})
+			reasons = append(reasons, k.Reason)
+		}
+		if len(checks) != len(c.Execution.Checks) || (len(checks) > 0 && !reflect.DeepEqual(checks, c.Execution.Checks)) {
+			t.Errorf("%s: checks %v want %v (%v)", c.Name, checks, c.Execution.Checks, reasons)
+		}
+		// Every finding the case states is asserted; one it leaves out is not (DEWP §4.7.4).
+		if f := c.Execution.Findings; f != nil {
+			if f.LateContradicted != nil && !reflect.DeepEqual(r.Execution.LateContradicted, *f.LateContradicted) {
+				t.Errorf("%s: lateContradicted %v want %v", c.Name, r.Execution.LateContradicted, *f.LateContradicted)
+			}
+			if f.UntrustedContradicted != nil && !reflect.DeepEqual(r.Execution.UntrustedContradicted, *f.UntrustedContradicted) {
+				t.Errorf("%s: untrustedContradicted %v want %v", c.Name, r.Execution.UntrustedContradicted, *f.UntrustedContradicted)
+			}
+			if f.DispatchConflicts != nil && !reflect.DeepEqual(r.Execution.DispatchConflicts, *f.DispatchConflicts) {
+				t.Errorf("%s: dispatchConflicts %v want %v", c.Name, r.Execution.DispatchConflicts, *f.DispatchConflicts)
+			}
+			if f.WindowCapped != nil {
+				capped := map[string]bool{}
+				for n, v := range r.Execution.ByNonce {
+					capped[n] = v.WindowCapped
+				}
+				if !reflect.DeepEqual(capped, f.WindowCapped) {
+					t.Errorf("%s: windowCapped %v want %v", c.Name, capped, f.WindowCapped)
+				}
+			}
+			if f.Sources != nil && !reflect.DeepEqual(r.Execution.Sources, f.Sources) {
+				t.Errorf("%s: sources %+v want %+v", c.Name, r.Execution.Sources, f.Sources)
+			}
+		}
+		if c.Signatures != nil {
+			sigs := []statusRow{}
+			for _, k := range r.Signatures.Checks {
+				sigs = append(sigs, statusRow{k.Seq, k.Status, k.Trusted})
+			}
+			if !reflect.DeepEqual(sigs, c.Signatures) {
+				t.Errorf("%s: signatures %v want %v", c.Name, sigs, c.Signatures)
+			}
+		}
+	}
+	for _, c := range section.Proofs {
+		var bundle ProofBundle
+		if err := json.Unmarshal(c.Bundle, &bundle); err != nil {
+			t.Fatalf("%s: %v", c.Name, err)
+		}
+		r := VerifyBundle(bundle, BundleVerifyOptions{TrustedRoot: c.Options.TrustedRoot, EvidencePolicy: c.Options.EvidencePolicy})
+		if !r.Properties.ContentVerified {
+			t.Errorf("%s: not content-verified", c.Name)
+		}
+		switch {
+		case c.Execution == nil && r.Execution != nil:
+			t.Errorf("%s: unexpected execution %+v", c.Name, r.Execution)
+		case c.Execution != nil && (r.Execution == nil || r.Execution.Status != c.Execution.Status || r.Execution.Trusted != c.Execution.Trusted):
+			t.Errorf("%s: execution %+v want %+v", c.Name, r.Execution, c.Execution)
+		}
+	}
+	for _, c := range section.Statements {
+		_, err := ParseExecutionEvidenceStatement(c.Bytes)
+		if (err == nil) != c.OK {
+			t.Errorf("statement %s: ok=%v want %v (%v)", c.Name, err == nil, c.OK, err)
+		}
+	}
+	for _, c := range section.Builder {
+		got, err := CanonicalExecutionEvidenceStatement(ExecutionEvidenceStatement{
+			Nonce: c.Input.Nonce, PayloadSha256: c.Input.PayloadSha256, Source: c.Input.Source,
+			Verdict: c.Input.Verdict, ObservedAt: c.Input.ObservedAt, SampledAt: c.Input.SampledAt,
+			Sequence: c.Input.Sequence, Observation: c.Input.Observation,
+		})
+		if err != nil || got != c.Bytes {
+			t.Errorf("builder %s: %q (%v) want %q", c.Name, got, err, c.Bytes)
+		}
+	}
+}
