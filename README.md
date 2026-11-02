@@ -67,6 +67,26 @@ floor demands one — is refused before any signature is counted, with a reason 
 requirement is weaker than the relying party's policy"; an equal or stricter one passes. A malformed
 floor (quorum below 1) is refused rather than ignored. The same field exists on the delegation
 expectation (pass the ordinary rule) and the agent-authority expectation (your sealing policy).
+The floor's `ExcludedSignerDIDs` is a typed pointer: nil means no exclusion floor, and a non-nil
+empty slice demands that the signed field be present. Unlike the TypeScript and Python floors, which
+are plain objects and refuse an explicit `null` as malformed, a Go caller cannot express that `null`,
+so there is nothing to refuse. Receipts are different: an explicit `null` issuer or exclusion set
+inside a receipt is refused, never read as absent. A floor decoded from JSON (`RequirementFloor`
+implements `UnmarshalJSON`) whose boolean flag is present but not a boolean (`null`, `"yes"`) is
+refused as malformed rather than read as false.
+
+**Enrolled approver devices (DIV §4.3.2).** A signed `requirement.requireEnrolledDevice: true` means
+only a witness from an enrolled approver device key counts. The envelope cannot prove that a key is
+one, so you supply the list from your own enrollment records as `Expected.EnrolledDeviceKeys`
+(base64 SPKI or COSE; for example `intyga.TrustAnchorEnrolledDeviceKeys(file)` from a console
+trust-anchor export). Under the signed field a witness counts only if it is `ES256` and the trusted
+key it verified under is in that list, compared by public key rather than encoding; a nil or empty
+list refuses the receipt, and an empty-string entry refuses it as malformed. The list narrows: every
+key must also be trusted for its signer in `Expected.Approvers`. Without the signed field the list is
+ignored. `RequirementFloor.RequireEnrolledDevice` refuses a signed requirement that omits it. A present
+value other than `true`, the field on an offline intent, delegation or agent authority, and the field
+together with `RequireHardwareKey` or `AllowedAaguids` are all refused, and the canonical builders
+refuse to emit the last two.
 
 One byte of drift — a swapped target, an appended region — and verification fails, because the signature was over the exact bytes you just recomputed.
 
@@ -82,6 +102,8 @@ res := verify.VerifyApprovalReceipt(receipt, expected, verify.VerifyOptions{
 ```
 
 `RequireUserVerification` defaults to true (demands the User-Verified flag); set it to a non-nil `false` to accept mere user presence (`VerifyPlatformReceipt` ignores it: DIV §5c.3 requires user verification unconditionally). Policy `AUTO_APPROVED` receipts carry no human signature and fail closed unless you opt in with `AllowAutoApproved: true`.
+
+`VerifyWebAuthnWitness(WebAuthnWitness, WebAuthnWitnessExpectation)` checks ONE assertion on its own — a stored ledger witness, one approver of a quorum — with the same §4.4.5 implementation the receipt verifiers use: origin (one or more `ExpectedOrigin` values), RP ID, user presence/verification, challenge and signature under a COSE_Key or DER SPKI P-256 key you supply. It fails closed on missing expectations or fields, never panics, and knows nothing of quorum, windows or payload type.
 
 ## Offline approvals and delegations
 
@@ -211,7 +233,9 @@ entry — is reported as `UntrustedContradiction` (never under an embedded key).
 a per-source `sequence`; `Sources` reports each source's `First`/`Last`, the `Gaps` between them and
 any `Divergent` counter value signed over two different statements. `RequireExecutionConfirmed` fails
 on any nonce not `confirmed`, on an empty report, and on any dispatch conflict, gap, divergence, late
-contradiction or untrusted contradiction. The §4.6.1 signature report (`Signatures.Checks`,
+contradiction or untrusted contradiction. It also rejects any `COMMITMENT_ONLY` entry in the covered
+bundle, since undisclosed content could hide a contradiction. Without this option, inclusion-only
+verification remains valid and reports the redaction. The §4.6.1 signature report (`Signatures.Checks`,
 `VerifyAuditSignatureWithEvidence`) places a bounded key at the same anchored time, so it and the
 statement check agree. `VerifyBundle` evaluates a single proof's statement through step 4 only and
 reports it `unbound`; its anchored time needs `TrustedCheckpoint`. `confirmed` means a

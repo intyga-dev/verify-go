@@ -2,9 +2,11 @@ package verify
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -31,7 +33,15 @@ type parityCase struct {
 	Signers           []string
 	ActionPatterns    []string
 	ReasonIncludes    string
-	WitnessTimes      map[string]int64
+	// Reason, when present, is the exact refusal text every port must produce (after API-name
+	// localization, apiNameHints).
+	Reason          *string
+	ReasonPrefix    *string
+	Witness         map[string]interface{}
+	Expectation     map[string]interface{}
+	DelegatedTo     []string
+	DelegatedQuorum *int
+	WitnessTimes    map[string]int64
 	// "cose": the case's WEBAUTHN witness verifies under the key's COSE_Key, not its SPKI.
 	ApproverKeyEncoding string
 }
@@ -49,6 +59,8 @@ type parityDoc struct {
 		AnchorPolicy AnchorPolicy
 		Cases        []parityCase
 	}
+	Delegation            paritySection
+	WebAuthnWitness       struct{ Cases []parityCase }
 	Evidence              struct{ Cases []parityCase }
 	RootsChain            struct{ Cases []parityCase }
 	DewpEvidenceHardening struct {
@@ -62,6 +74,13 @@ type parityDoc struct {
 		Platform       paritySection
 		AgentAuthority paritySection
 		Bundles        struct{ Cases []parityCase }
+	}
+	// EnrolledDevice is DIV §4.3.2 "Enrolled approver devices", with its own keys.
+	EnrolledDevice struct {
+		Keys           []parityKey
+		Approvals      paritySection
+		Delegation     paritySection
+		AgentAuthority paritySection
 	}
 }
 
@@ -127,9 +146,57 @@ func checkSigners(t *testing.T, c parityCase, got []string) {
 }
 func checkReason(t *testing.T, c parityCase, reason string) {
 	t.Helper()
-	if c.ReasonIncludes != "" && !strings.Contains(reason, c.ReasonIncludes) {
-		t.Errorf("%s: reason %q does not contain %q", c.Name, reason, c.ReasonIncludes)
+	if c.ReasonIncludes != "" && !strings.Contains(reason, localizedReason(t, c.ReasonIncludes)) {
+		t.Errorf("%s: reason %q does not contain %q", c.Name, reason, localizedReason(t, c.ReasonIncludes))
 	}
+	if c.Reason != nil && reason != localizedReason(t, *c.Reason) {
+		t.Errorf("%s: reason %q, want exactly %q", c.Name, reason, localizedReason(t, *c.Reason))
+	}
+}
+
+// apiNameHints is packages/mcp-schemas/vectors/api-name-hints.json: vector reasons name the
+// TypeScript API, and this port's refusal texts name Go's (VerifyOptions{AllowExpired: true},
+// expected.Target, VerifyDelegation, ...). Everything else in a text is identical across ports.
+type apiNameHints struct {
+	Tokens []string          `json:"tokens"`
+	Go     map[string]string `json:"go"`
+}
+
+func loadAPINameHints(t *testing.T) apiNameHints {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("vectors", "api-name-hints.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var h apiNameHints
+	if err := json.Unmarshal(b, &h); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.Go) != len(h.Tokens) {
+		t.Fatalf("api-name-hints go map has %d entries for %d tokens", len(h.Go), len(h.Tokens))
+	}
+	for _, token := range h.Tokens {
+		if _, ok := h.Go[token]; !ok {
+			t.Fatalf("api-name-hints go map lacks %q", token)
+		}
+	}
+	return h
+}
+
+// localizedReason rewrites an expected reason: every token, longest first, becomes a placeholder,
+// then every placeholder becomes Go's spelling — a single pass, so a value is never rescanned.
+func localizedReason(t *testing.T, text string) string {
+	t.Helper()
+	h := loadAPINameHints(t)
+	order := append([]string(nil), h.Tokens...)
+	sort.SliceStable(order, func(i, j int) bool { return len(order[i]) > len(order[j]) })
+	for i, token := range order {
+		text = strings.ReplaceAll(text, token, fmt.Sprintf("\x00%d\x00", i))
+	}
+	for i, token := range order {
+		text = strings.ReplaceAll(text, fmt.Sprintf("\x00%d\x00", i), h.Go[token])
+	}
+	return text
 }
 
 // parityFloor reads a case's optional RP-supplied requirement floor (DIV §5 step 3d).
@@ -139,11 +206,34 @@ func parityFloor(raw map[string]interface{}) *RequirementFloor {
 		return nil
 	}
 	f := &RequirementFloor{}
+	// The boolean flags go through RequirementFloor's own JSON decoding, so a present non-boolean
+	// flag ("yes", null) reaches the verifier as a malformed floor exactly as in the reference.
+	flags := map[string]interface{}{}
+	for _, key := range []string{"requesterCannotApprove", "requireHardwareKey", "requireEnrolledDevice"} {
+		if value, present := m[key]; present {
+			flags[key] = value
+		}
+	}
+	encoded, _ := json.Marshal(flags)
+	if err := json.Unmarshal(encoded, f); err != nil {
+		panic(err)
+	}
 	if n, ok := m["requiredApprovals"].(float64); ok {
 		f.RequiredApprovals = int(n)
 	}
-	f.RequesterCannotApprove, _ = m["requesterCannotApprove"].(bool)
-	f.RequireHardwareKey, _ = m["requireHardwareKey"].(bool)
+	if rawExcluded, present := m["excludedSignerDids"]; present {
+		values, ok := rawExcluded.([]interface{})
+		if !ok {
+			return f
+		}
+		excluded := make([]string, 0, len(values))
+		for _, value := range values {
+			if did, ok := value.(string); ok {
+				excluded = append(excluded, did)
+			}
+		}
+		f.ExcludedSignerDIDs = &excluded
+	}
 	return f
 }
 func checkInt(t *testing.T, name, field string, want *int, got int) {
@@ -161,6 +251,8 @@ func TestVerifierParityVectors(t *testing.T) {
 	t.Run("approvals", func(t *testing.T) { runApprovalCases(t, d.Approvals, keys) })
 	t.Run("platform", func(t *testing.T) { runPlatformCases(t, d.Platform, keys) })
 	t.Run("authority", func(t *testing.T) { runAuthorityCases(t, d.AgentAuthority, keys) })
+	t.Run("delegation", func(t *testing.T) { runDelegationCases(t, d.Delegation, keys) })
+	t.Run("webauthnWitness", func(t *testing.T) { runWebAuthnWitnessCases(t, d.WebAuthnWitness.Cases) })
 	t.Run("bundles", func(t *testing.T) { runBundleCases(t, d.Bundles.Cases, keys, &d.Bundles.AnchorPolicy) })
 	t.Run("evidence", func(t *testing.T) { runEvidenceCases(t, d.Evidence.Cases, keys) })
 	t.Run("dewpEvidenceHardening", func(t *testing.T) {
@@ -188,6 +280,19 @@ func TestVerifierParityVectors(t *testing.T) {
 		runPlatformCases(t, h.Platform, own)
 		runAuthorityCases(t, h.AgentAuthority, own)
 		runBundleCases(t, h.Bundles.Cases, own, nil)
+	})
+	t.Run("enrolledDevice", func(t *testing.T) {
+		h := d.EnrolledDevice
+		if len(h.Approvals.Cases) == 0 || len(h.Delegation.Cases) == 0 || len(h.AgentAuthority.Cases) == 0 {
+			t.Fatal("missing enrolledDevice section")
+		}
+		own := map[string]parityKey{}
+		for _, k := range h.Keys {
+			own[k.ID] = k
+		}
+		runApprovalCases(t, h.Approvals, own)
+		runDelegationCases(t, h.Delegation, own)
+		runAuthorityCases(t, h.AgentAuthority, own)
 	})
 	t.Run("chain", func(t *testing.T) {
 		for _, c := range d.RootsChain.Cases {
@@ -336,7 +441,22 @@ func runApprovalCases(t *testing.T, sec paritySection, keys map[string]parityKey
 					}
 				}
 			}
-			anchor = ApproverTrustAnchor{DIDs: dids, ResolveKeys: func(did string) []string { return resolved[did] }}
+			throwsFor := map[string]bool{}
+			if values, ok := raw["resolverThrowsFor"].([]interface{}); ok {
+				for _, did := range values {
+					throwsFor[did.(string)] = true
+				}
+			}
+			anchor = ApproverTrustAnchor{DIDs: dids, ResolveKeys: func(did string) []string {
+				if throwsFor[did] {
+					panic("resolver unavailable for " + did)
+				}
+				return resolved[did]
+			}}
+			if omitted, _ := raw["resolverOmitted"].(bool); omitted {
+				// A DID-mode anchor with no resolver at all (neither ResolveKeys nor ResolveKey).
+				anchor = ApproverTrustAnchor{DIDs: dids}
+			}
 		} else {
 			pub := []string{}
 			for _, id := range raw["approverKeyIds"].([]interface{}) {
@@ -349,8 +469,23 @@ func runApprovalCases(t *testing.T, sec paritySection, keys map[string]parityKey
 			anchor = ApproverTrustAnchor{PublicKeys: pub}
 		}
 		expected := Expected{Target: raw["target"].(string), Nonce: raw["nonce"].(string), ActionType: raw["actionType"].(string), Params: raw["params"].(map[string]interface{}), Approvers: anchor, Requirement: parityFloor(raw)}
+		if tenant, ok := raw["tenantId"].(string); ok {
+			expected.TenantID = &tenant
+		}
 		if context, ok := raw["agentContext"].(map[string]interface{}); ok {
 			expected.AgentContext = context
+		}
+		// enrolledDevice section: key ids map to SPKI; a literal list passes through verbatim.
+		if ids, ok := raw["enrolledDeviceKeyIds"].([]interface{}); ok {
+			expected.EnrolledDeviceKeys = []string{}
+			for _, id := range ids {
+				expected.EnrolledDeviceKeys = append(expected.EnrolledDeviceKeys, keys[id.(string)].SpkiB64)
+			}
+		} else if values, ok := raw["enrolledDeviceKeys"].([]interface{}); ok {
+			expected.EnrolledDeviceKeys = []string{}
+			for _, value := range values {
+				expected.EnrolledDeviceKeys = append(expected.EnrolledDeviceKeys, value.(string))
+			}
 		}
 		result := VerifyApprovalReceipt(c.Receipt, expected, optTime(mapMerge(sec.Options, c.Options)))
 		if result.OK != c.OK {
@@ -370,6 +505,9 @@ func runPlatformCases(t *testing.T, sec paritySection, keys map[string]parityKey
 			pub = append(pub, keys[id.(string)].CoseB64)
 		}
 		ex := PlatformReceiptExpectation{Approvers: ApproverTrustAnchor{PublicKeys: pub}, PayloadHash: raw["payloadHash"].(string), RpID: raw["rpId"].(string), Nonce: raw["nonce"].(string), SubjectExternalID: raw["subjectExternalId"].(string)}
+		if tenant, ok := raw["tenantId"].(string); ok {
+			ex.TenantID = &tenant
+		}
 		r := VerifyPlatformReceipt(c.Receipt, ex, optTime(mapMerge(sec.Options, c.Options)))
 		if r.OK != c.OK {
 			t.Errorf("%s: got %v %s", c.Name, r.OK, r.Reason)
@@ -399,6 +537,9 @@ func runAuthorityCases(t *testing.T, sec paritySection, keys map[string]parityKe
 			}
 		}
 		ex := AgentAuthorityExpectation{Approvers: a, Target: raw["target"].(string), AgentDID: raw["agentDid"].(string), Requirement: parityFloor(raw)}
+		if tenant, ok := raw["tenantId"].(string); ok {
+			ex.TenantID = &tenant
+		}
 		r, authority := VerifyAgentAuthority(c.Receipt, ex, optTime(mapMerge(sec.Options, c.Options)))
 		if r.OK != c.OK {
 			t.Errorf("%s: got %v %s", c.Name, r.OK, r.Reason)
@@ -446,8 +587,10 @@ func TestExecutionEvidenceParityVectors(t *testing.T) {
 					RequireExecutionConfirmed bool                     `json:"requireExecutionConfirmed"`
 					RekorSpki                 string                   `json:"rekorSpki"`
 				} `json:"options"`
-				OK        bool `json:"ok"`
-				Execution struct {
+				OK              bool `json:"ok"`
+				ContentVerified *int `json:"contentVerified"`
+				CommitmentOnly  *int `json:"commitmentOnly"`
+				Execution       struct {
 					ByNonce  map[string]string `json:"byNonce"`
 					Checks   []statusRow       `json:"checks"`
 					Findings *struct {
@@ -517,6 +660,12 @@ func TestExecutionEvidenceParityVectors(t *testing.T) {
 		})
 		if r.OK != c.OK {
 			t.Errorf("%s: ok=%v want %v (%v)", c.Name, r.OK, c.OK, r.Failed)
+		}
+		if c.ContentVerified != nil && r.ContentVerified != *c.ContentVerified {
+			t.Errorf("%s: contentVerified=%d want %d", c.Name, r.ContentVerified, *c.ContentVerified)
+		}
+		if c.CommitmentOnly != nil && r.CommitmentOnly != *c.CommitmentOnly {
+			t.Errorf("%s: commitmentOnly=%d want %d", c.Name, r.CommitmentOnly, *c.CommitmentOnly)
 		}
 		byNonce := map[string]string{}
 		for n, v := range r.Execution.ByNonce {
@@ -598,6 +747,105 @@ func TestExecutionEvidenceParityVectors(t *testing.T) {
 		})
 		if err != nil || got != c.Bytes {
 			t.Errorf("builder %s: %q (%v) want %q", c.Name, got, err, c.Bytes)
+		}
+	}
+}
+
+// runDelegationCases runs the seal verifier against a DID-mode anchor over expected.approverDids.
+func runDelegationCases(t *testing.T, sec paritySection, keys map[string]parityKey) {
+	if len(sec.Cases) == 0 {
+		t.Fatal("missing delegation section")
+	}
+	for _, c := range sec.Cases {
+		raw := mapMerge(sec.Expected, c.Expected)
+		table := raw["approverDids"].(map[string]interface{})
+		dids := []string{}
+		resolved := map[string][]string{}
+		for did, ids := range table {
+			dids = append(dids, did)
+			for _, id := range ids.([]interface{}) {
+				resolved[did] = append(resolved[did], keys[id.(string)].SpkiB64)
+			}
+		}
+		expected := Expected{
+			Approvers:   ApproverTrustAnchor{DIDs: dids, ResolveKeys: func(did string) []string { return resolved[did] }},
+			Requirement: parityFloor(raw),
+		}
+		expected.Target, _ = raw["target"].(string)
+		expected.ActionType, _ = raw["actionType"].(string)
+		expected.Params, _ = raw["params"].(map[string]interface{})
+		expected.RequesterDID, _ = raw["requesterDid"].(string)
+		if tenant, ok := raw["tenantId"].(string); ok {
+			expected.TenantID = &tenant
+		}
+		r, d := VerifyDelegation(c.Receipt, expected, optTime(mapMerge(sec.Options, c.Options)))
+		if r.OK != c.OK {
+			t.Errorf("%s: got %v %s", c.Name, r.OK, r.Reason)
+		}
+		checkReason(t, c, r.Reason)
+		if c.Signers != nil || c.DelegatedTo != nil || c.DelegatedQuorum != nil {
+			if d == nil {
+				t.Errorf("%s: no verified delegation to inspect", c.Name)
+				continue
+			}
+			if c.Signers != nil && !reflect.DeepEqual(d.Signers, c.Signers) {
+				t.Errorf("%s: signers %v, want %v", c.Name, d.Signers, c.Signers)
+			}
+			if c.DelegatedTo != nil && !reflect.DeepEqual(d.DelegatedTo, c.DelegatedTo) {
+				t.Errorf("%s: delegatedTo %v, want %v", c.Name, d.DelegatedTo, c.DelegatedTo)
+			}
+			if c.DelegatedQuorum != nil && d.DelegatedQuorum != *c.DelegatedQuorum {
+				t.Errorf("%s: delegatedQuorum %d, want %d", c.Name, d.DelegatedQuorum, *c.DelegatedQuorum)
+			}
+		}
+	}
+}
+
+// runWebAuthnWitnessCases runs the standalone assertion check. An expectation field that is absent is
+// omitted; a value the reference would not accept as a string becomes "", which Go refuses the same
+// way (the reference reads any non-string as missing).
+func runWebAuthnWitnessCases(t *testing.T, cases []parityCase) {
+	if len(cases) == 0 {
+		t.Fatal("missing webauthnWitness section")
+	}
+	text := func(m map[string]interface{}, key string) string {
+		s, _ := m[key].(string)
+		return s
+	}
+	for _, c := range cases {
+		w := WebAuthnWitness{
+			SignedPayload:     text(c.Witness, "signedPayload"),
+			PublicKey:         text(c.Witness, "publicKey"),
+			AuthenticatorData: text(c.Witness, "authenticatorData"),
+			ClientDataJSON:    text(c.Witness, "clientDataJSON"),
+			Signature:         text(c.Witness, "signature"),
+		}
+		var e WebAuthnWitnessExpectation
+		switch origin := c.Expectation["expectedOrigin"].(type) {
+		case nil:
+		case string:
+			e.ExpectedOrigin = []string{origin}
+		case []interface{}:
+			e.ExpectedOrigin = []string{}
+			for _, o := range origin {
+				s, _ := o.(string)
+				e.ExpectedOrigin = append(e.ExpectedOrigin, s)
+			}
+		default:
+			e.ExpectedOrigin = []string{""}
+		}
+		e.ExpectedRpID = text(c.Expectation, "expectedRpId")
+		if uv, ok := c.Expectation["requireUserVerification"].(bool); ok {
+			e.RequireUserVerification = &uv
+		}
+		e.AllowCrossOrigin, _ = c.Expectation["allowCrossOrigin"].(bool)
+		r := VerifyWebAuthnWitness(w, e)
+		if r.OK != c.OK {
+			t.Errorf("%s: got %v %s", c.Name, r.OK, r.Reason)
+		}
+		checkReason(t, c, r.Reason)
+		if c.ReasonPrefix != nil && !strings.HasPrefix(r.Reason, localizedReason(t, *c.ReasonPrefix)) {
+			t.Errorf("%s: reason %q lacks prefix %q", c.Name, r.Reason, localizedReason(t, *c.ReasonPrefix))
 		}
 	}
 }

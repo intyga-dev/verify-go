@@ -3,7 +3,69 @@
 All notable changes to `github.com/intyga-dev/verify-go` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [2.3.0]
+
+- DIV §4.3.2 "Enrolled approver devices" (targets DIV 1.3.0), pinned by the `enrolledDevice` section
+  of the shared parity vectors and the new `intentPayloads` canonical vector:
+  - `ApprovalRequirement.RequireEnrolledDevice` is serialized only when true, as the literal `true`.
+    The offline, delegation and agent-authority builders refuse it, and every builder refuses it
+    together with `RequireHardwareKey` or a non-empty `AllowedAaguids`. Parsing tells an absent field
+    from a present `false`, `null` or other value, which every verifier refuses (DIV §5 step 3e).
+  - `Expected.EnrolledDeviceKeys`: under the signed field, `VerifyApprovalReceipt` refuses a receipt
+    without the list (nil or empty) and counts only an `ES256` witness whose trusted key is in it,
+    compared by public key (SPKI and COSE spellings of one key match).
+  - `RequirementFloor.RequireEnrolledDevice` (DIV §5 step 3d), and `RequirementFloor.UnmarshalJSON`,
+    which refuses a floor whose boolean flag is present but not a boolean as malformed.
+  - `VerifyDelegation` and `VerifyAgentAuthority` refuse any present `requireEnrolledDevice`.
+  - Exported reason constants `EnrolledDevice*Reason`.
+
+## [2.2.0]
+
+- An explicit `null` `requester.credentialIssuerDid` in a receipt, or `null` signed
+  `requirement.excludedSignerDids`, is refused as malformed with the reference's reasons instead of
+  being read as absent (DIV §4.3.2). `RequesterIdentity` and `ApprovalRequirement` gained
+  `UnmarshalJSON` to keep the distinction; the canonical builders refuse the same values. Pinned by
+  `null-credential-issuer-refused-not-dropped` and `null-signed-excluded-signer-dids-refused-not-dropped`.
+- WebAuthn assertion signatures are ASN.1 DER only, as in the reference: a raw r‖s (IEEE P1363)
+  signature is refused ("WebAuthn signature does not verify against the trusted signer key") on the
+  receipt path and in `VerifyWebAuthnWitness`. Bare-key ES256 witnesses still accept both encodings.
+- `VerifyWebAuthnWitness(WebAuthnWitness, WebAuthnWitnessExpectation) VerifyResult`: the standalone
+  §4.4.5 assertion check (mirrors `verifyWebAuthnWitness` in `@intyga/verify`), sharing the receipt
+  verifiers' implementation. Fails closed on missing expectations or fields and never panics. Pinned
+  by the shared `webauthnWitness` parity vectors (exact reasons).
+- Refusal texts name Go's own API (`VerifyOptions{AllowExpired: true}`, `expected.Target`,
+  `VerifyDelegation`, `ExpectedOrigin`, …); every other word matches the reference. The spellings are
+  recorded in `packages/mcp-schemas/vectors/api-name-hints.json` (`go`), which the harness applies.
+- `VerifyApprovalReceipt` and `VerifyPlatformReceipt` refuse an empty `Expected.Nonce` immediately
+  before the nonce comparison ("expected.Nonce is required — it must be the challenge YOU issued (DIV
+  §5 step 10)").
+
+- Refusals now match the TypeScript reference in verdict, text and order (pinned by exact `reason`
+  assertions in the shared parity vectors):
+  - Identity extensions are checked after the quorum minimum and before the signer class, with
+    separate texts for a malformed `credentialIssuerDid`, a malformed exclusion set and a repeated
+    excluded DID ("signed requirement.excludedSignerDids must not contain duplicates").
+  - The canonical builders refuse a malformed `credentialIssuerDid` or `excludedSignerDids`, as the
+    reference does, instead of emitting bytes no other port reproduces.
+  - Tenant binding is decided first, from the payload text, with the reference's texts; a v1 payload
+    carrying `tenantId` now fails the byte comparison instead of an early check.
+  - `VerifyApprovalReceipt` refuses an empty `Expected.Target` (DIV Target Isolation) and an unset
+    trust anchor; the requester-DID check moved after expiry; agent `nbf`, irreversible/
+    AUTO_APPROVED and delegated-chain checks run in the reference's order.
+  - Candidate-key resolution, four-eyes, key-only, WebAuthn, platform, delegation and agent-authority
+    texts are the reference's; the agent-authority and platform loops now report every per-witness
+    failure; the requirement floor checks exclusion coverage first with the reference's text.
+  - Window lengths are printed with JavaScript `toFixed(1)` rounding.
+
+- A DID-mode resolver that throws (panics) while resolving an EXCLUDED identity's keys now refuses
+  the verification instead of contributing no keys; returning no keys is unchanged.
+- Requirement floors now refuse malformed `ExcludedSignerDIDs` as malformed.
+- Approval requirements can bind `excludedSignerDids`, requester identities can bind a
+  `credentialIssuerDid`, and relying-party floors enforce exclusion-set presence and coverage.
+  Keys the DID-mode resolver returns for an excluded identity are pre-counted, so an eligible alias
+  signing with one is refused as a shared key (DIV §4.4.6).
+- `RequireExecutionConfirmed` now fails closed on any covered `COMMITMENT_ONLY` entry; ordinary
+  inclusion verification remains compatible and reports the redaction.
 
 ## [2.1.0]
 

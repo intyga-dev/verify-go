@@ -61,7 +61,8 @@ func TestApprovalTenantBindingIsCallerPinned(t *testing.T) {
 	}
 	auto := "AUTO_APPROVED"
 	receipt := ApprovalReceipt{CanonicalPayload: canonical, ActionDescription: "Display", Requester: &requester, SigAlg: &auto}
-	expected := Expected{TenantID: tenantIDPtr("Tenant-A"), Target: "target", ActionType: "action", Params: params, Nonce: "nonce"}
+	// An anchor is required even for an auto-approved receipt, as in the reference.
+	expected := Expected{TenantID: tenantIDPtr("Tenant-A"), Target: "target", ActionType: "action", Params: params, Nonce: "nonce", Approvers: ApproverTrustAnchor{DIDs: []string{"did:intyga:alice"}}}
 	opts := VerifyOptions{AllowAutoApproved: true, AsOf: time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)}
 	if got := VerifyApprovalReceipt(receipt, expected, opts); !got.OK {
 		t.Fatalf("matching tenant refused: %s", got.Reason)
@@ -69,17 +70,17 @@ func TestApprovalTenantBindingIsCallerPinned(t *testing.T) {
 
 	withoutTenant := expected
 	withoutTenant.TenantID = nil
-	if got := VerifyApprovalReceipt(receipt, withoutTenant, opts); got.OK || !strings.Contains(got.Reason, "expected tenant") {
+	if got := VerifyApprovalReceipt(receipt, withoutTenant, opts); got.OK || !strings.Contains(got.Reason, "expected.TenantID is required") {
 		t.Fatalf("v2 without caller tenant was not refused clearly: %+v", got)
 	}
 	emptyTenant := expected
 	emptyTenant.TenantID = tenantIDPtr("")
-	if got := VerifyApprovalReceipt(receipt, emptyTenant, opts); got.OK || !strings.Contains(got.Reason, "expected tenant") {
+	if got := VerifyApprovalReceipt(receipt, emptyTenant, opts); got.OK || !strings.Contains(got.Reason, "expected.TenantID is required") {
 		t.Fatalf("v2 with an explicitly empty caller tenant was not refused clearly: %+v", got)
 	}
 	mismatch := expected
 	mismatch.TenantID = tenantIDPtr("tenant-a")
-	if got := VerifyApprovalReceipt(receipt, mismatch, opts); got.OK || !strings.Contains(got.Reason, "does not match") {
+	if got := VerifyApprovalReceipt(receipt, mismatch, opts); got.OK || !strings.Contains(got.Reason, "signed for a different tenant") {
 		t.Fatalf("case-sensitive tenant mismatch was not refused: %+v", got)
 	}
 
@@ -93,7 +94,7 @@ func TestApprovalTenantBindingIsCallerPinned(t *testing.T) {
 	if got := VerifyApprovalReceipt(receipt, legacyExpected, opts); !got.OK {
 		t.Fatalf("legacy v1 without a tenant expectation must remain valid: %s", got.Reason)
 	}
-	if got := VerifyApprovalReceipt(receipt, expected, opts); got.OK || !strings.Contains(got.Reason, "not tenant-bound") {
+	if got := VerifyApprovalReceipt(receipt, expected, opts); got.OK || !strings.Contains(got.Reason, "cannot be verified with an expected tenantId") {
 		t.Fatalf("legacy v1 with a tenant expectation was not refused: %+v", got)
 	}
 	receipt.CanonicalPayload = strings.Replace(legacyCanonical, `"v":1`, `"v":2`, 1)
@@ -110,7 +111,7 @@ func TestApprovalRefusesCrossTenantDelegation(t *testing.T) {
 	}
 	receipt := ApprovalReceipt{CanonicalPayload: canonical, ActionDescription: "Display", Requester: &requester}
 	delegation := &VerifiedDelegation{TenantID: "Tenant-B", RequesterDID: requester.DID, DelegatedTo: []string{"did:intyga:alice"}, DelegatedQuorum: 1, Target: "target", ActionType: "action", Params: params, ExpiresAt: "2026-10-11T00:00:00.000Z"}
-	got := VerifyApprovalReceipt(receipt, Expected{TenantID: tenantIDPtr("Tenant-A"), Target: "target", ActionType: "action", Params: params, Nonce: "nonce"}, VerifyOptions{AllowOffline: true, Delegation: delegation, AsOf: time.Date(2026, 10, 10, 0, 1, 0, 0, time.UTC)})
+	got := VerifyApprovalReceipt(receipt, Expected{TenantID: tenantIDPtr("Tenant-A"), Target: "target", ActionType: "action", Params: params, Nonce: "nonce", Approvers: ApproverTrustAnchor{DIDs: []string{"did:intyga:alice"}}}, VerifyOptions{AllowOffline: true, Delegation: delegation, AsOf: time.Date(2026, 10, 10, 0, 1, 0, 0, time.UTC)})
 	if got.OK || !strings.Contains(got.Reason, "different tenants") {
 		t.Fatalf("cross-tenant delegation was not refused: %+v", got)
 	}

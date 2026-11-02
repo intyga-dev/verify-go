@@ -98,6 +98,49 @@ func TestRequirementFloorRefusesSelfComposedDowngrade(t *testing.T) {
 	}
 }
 
+func TestExcludedSignerDIDsAndCredentialIssuerAreEnforced(t *testing.T) {
+	people, anchor, requester := floorFixture(t)
+	params := map[string]interface{}{"amount": 7}
+	excluded := []string{"did:ex:alice"}
+	requirement := ApprovalRequirement{RequiredApprovals: 1, SignerClass: "human", ExcludedSignerDIDs: &excluded}
+	canonical, err := CanonicalIntentPayload("prod", "payments.wire", "Wire", params, requester, requirement, "excluded_nonce", "2999-01-01T00:00:00.000Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := signFloorReceipt(t, people, canonical, "Wire", params, requester, "did:ex:alice")
+	expected := Expected{Target: "prod", Nonce: "excluded_nonce", ActionType: "payments.wire", Params: params, Approvers: anchor}
+	if result := VerifyApprovalReceipt(receipt, expected, VerifyOptions{}); result.OK || !strings.Contains(result.Reason, "four-eyes") {
+		t.Fatalf("explicitly excluded signer counted: ok=%v %s", result.OK, result.Reason)
+	}
+
+	issuer := "did:ex:bob"
+	requester.CredentialIssuerDID = &issuer
+	requirement.ExcludedSignerDIDs = nil
+	requirement.RequesterCannotApprove = true
+	canonical, err = CanonicalIntentPayload("prod", "payments.wire", "Wire", params, requester, requirement, "issuer_nonce", "2999-01-01T00:00:00.000Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt = signFloorReceipt(t, people, canonical, "Wire", params, requester, issuer)
+	expected.Nonce = "issuer_nonce"
+	if result := VerifyApprovalReceipt(receipt, expected, VerifyOptions{}); result.OK || !strings.Contains(result.Reason, "four-eyes") {
+		t.Fatalf("credential issuer counted under four-eyes: ok=%v %s", result.OK, result.Reason)
+	}
+}
+
+func TestExcludedSignerFloorRequiresPresentSuperset(t *testing.T) {
+	people, anchor, requester := floorFixture(t)
+	params := map[string]interface{}{}
+	requirement := ApprovalRequirement{RequiredApprovals: 1, SignerClass: "human"}
+	canonical, _ := CanonicalIntentPayload("prod", "restart", "Restart", params, requester, requirement, "floor_excluded", "2999-01-01T00:00:00.000Z")
+	receipt := signFloorReceipt(t, people, canonical, "Restart", params, requester, "did:ex:bob")
+	required := []string{}
+	expected := Expected{Target: "prod", Nonce: "floor_excluded", ActionType: "restart", Params: params, Approvers: anchor, Requirement: &RequirementFloor{RequiredApprovals: 1, ExcludedSignerDIDs: &required}}
+	if result := VerifyApprovalReceipt(receipt, expected, VerifyOptions{}); result.OK || !strings.Contains(result.Reason, WeakerRequirementReason) {
+		t.Fatalf("floor presence was downgraded: ok=%v %s", result.OK, result.Reason)
+	}
+}
+
 func TestRequirementFloorAppliesToDelegationAndAuthority(t *testing.T) {
 	people, anchor, requester := floorFixture(t)
 	params := map[string]interface{}{"service": "api"}
@@ -131,5 +174,23 @@ func TestRequirementFloorAppliesToDelegationAndAuthority(t *testing.T) {
 	ax.Requirement = &RequirementFloor{RequiredApprovals: 2}
 	if r, _ := VerifyAgentAuthority(authority, ax, VerifyOptions{}); r.OK || !strings.Contains(r.Reason, WeakerRequirementReason) {
 		t.Fatalf("authority floor not enforced: ok=%v %s", r.OK, r.Reason)
+	}
+}
+
+// The floor is a SET the signed exclusions must cover: a repeated DID asks for nothing more, while a
+// malformed DID fails closed as "malformed" before any comparison, as in the reference.
+func TestExcludedSignerFloorAcceptsDuplicatesAndRefusesMalformedDIDs(t *testing.T) {
+	signedExcluded := []string{"did:ex:a"}
+	signed := ApprovalRequirement{RequiredApprovals: 1, SignerClass: "human", ExcludedSignerDIDs: &signedExcluded}
+	duplicated := []string{"did:ex:a", "did:ex:a"}
+	if ok, reason := checkRequirementFloor(signed, &RequirementFloor{RequiredApprovals: 1, ExcludedSignerDIDs: &duplicated}); !ok {
+		t.Fatalf("duplicate floor DIDs refused: %s", reason)
+	}
+	for _, bad := range []string{"", "did:", "not-a-did", "did:ex:with space"} {
+		malformed := []string{bad}
+		ok, reason := checkRequirementFloor(signed, &RequirementFloor{RequiredApprovals: 3, ExcludedSignerDIDs: &malformed})
+		if ok || !strings.Contains(reason, "malformed") {
+			t.Fatalf("malformed floor DID %q: ok=%v %s", bad, ok, reason)
+		}
 	}
 }
