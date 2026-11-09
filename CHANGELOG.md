@@ -3,6 +3,16 @@
 All notable changes to `github.com/intyga-dev/verify-go` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [2.4.0]
+
+- Malformed witnesses are a refusal, never a silently non-verifying witness (audit A-04, 6 Nov 2026):
+  a `null` element, an empty object or an empty `signature` in `signatures` refuses the whole
+  artifact ("receipt carries a malformed witness…"; `delegation …` / `authority …`) from
+  `VerifyApprovalReceipt`, `VerifyPlatformReceipt`, `VerifyDelegation` and `VerifyAgentAuthority`.
+  A valid witness beside a null one used to verify.
+- Pinned by the new shared `tenant-binding-vectors.json` cases (subsecond authority interval and
+  containment, malformed and empty-signature witness beside a valid one).
+
 ## [2.3.0]
 
 - DIV §4.3.2 "Enrolled approver devices" (targets DIV 1.3.0), pinned by the `enrolledDevice` section
